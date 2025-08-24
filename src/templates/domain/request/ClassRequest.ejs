@@ -1,0 +1,8 @@
+import { BaseRequest } from '@azure-net/kit';
+import type { I<%= pascalCaseName %>Request } from '../Abstracts';
+
+export class <%= pascalCaseName %>Request extends BaseRequest<I<%= pascalCaseName %>Request> {
+    override rules() {
+        return {};
+    }
+}

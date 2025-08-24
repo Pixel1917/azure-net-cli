@@ -1,0 +1,33 @@
+import { <%= datasource %> } from '$core/datasources';
+import type {
+    I<%= pascalCaseName %>Collection,
+    I<%= pascalCaseName %>Resource,
+    I<%= pascalCaseName %>CreateRequest,
+    I<%= pascalCaseName %>UpdateRequest,
+    I<%= pascalCaseName %>CollectionQuery,
+} from '<%= aliasDomain %>/<%= pascalCaseName %>';
+
+export class <%= pascalCaseName %>Repo {
+    private endpoint = '<%= endpoint %>';
+    constructor(private source = new <%= datasource %>()) {}
+
+    public async collection(queryParams?: I<%= pascalCaseName %>CollectionQuery) {
+        return await this.source.createRequest<I<%= pascalCaseName %>Collection>(({ http, query }) => http.get(`${this.endpoint}${query.build(queryParams)}`));
+    }
+
+    public async resource(id: number) {
+        return await this.source.createRequest<I<%= pascalCaseName %>Resource>(({ http }) => http.get(`${this.endpoint}/${id}`));
+    }
+
+    public async create(data: I<%= pascalCaseName %>CreateRequest) {
+        return await this.source.createRequest<I<%= pascalCaseName %>Resource>(({ http }) => http.post(this.endpoint, { json: data }));
+    }
+
+    public async update(id: number, data: I<%= pascalCaseName %>UpdateRequest) {
+        return await this.source.createRequest<I<%= pascalCaseName %>Resource>(({ http }) => http.put(`${this.endpoint}/${id}`, { json: data }));
+    }
+
+    public async remove(id: number) {
+        return await this.source.createRequest<never>(({ http }) => http.delete(`${this.endpoint}/${id}`));
+    }
+}
