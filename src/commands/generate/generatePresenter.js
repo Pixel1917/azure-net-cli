@@ -3,15 +3,15 @@ import path from 'path';
 import { selectContext, getContextPath, toPascalCase, getAvailableFiles } from '../../utils/contextUtils.js';
 import { writeIfNotExists, updateIndexTs } from '../../utils/fileUtils.js';
 
-const presenterWithCoreTemplate = `import { {{corePresenter}} } from '$core/Presenters/index.js';
+const presenterWithCoreTemplate = `import { {{corePresenter}} } from '$core/Presenter';
 {{serviceImport}}
 
-export const {{contextName}}{{name}}Presenter = {{corePresenter}}('{{contextName}}{{name}}Presenter', ({ createAsyncResource, createAsyncAction }) => {
+export const {{name}}Presenter = {{corePresenter}}('{{name}}Presenter', ({ createAsyncResource, createAsyncAction }) => {
 \t{{serviceInit}}
 \t
 \tconst example = async () => {
 \t\t// Implement presenter logic
-\t\treturn {};
+\t\treturn await createAsyncResource(Promise.resolve({}));
 \t};
 \t
 \treturn { example };
@@ -20,7 +20,7 @@ export const {{contextName}}{{name}}Presenter = {{corePresenter}}('{{contextName
 const presenterWithPackageTemplate = `import { createPresenter } from '@azure-net/kit';
 {{serviceImport}}
 
-export const {{contextName}}{{name}}Presenter = createPresenter('{{contextName}}{{name}}Presenter', () => {
+export const {{name}}Presenter = createPresenter('{{name}}Presenter', () => {
 \t{{serviceInit}}
 \t
 \tconst example = async () => {
@@ -42,12 +42,12 @@ export default async function generatePresenter() {
     const { name } = await prompts({
         type: 'text',
         name: 'name',
-        message: 'Presenter name (without "Presenter" suffix):'
+        message: 'Module name (will create folder in Delivery):'
     });
 
     // Check for core presenters
     const corePresenters = await getAvailableFiles(
-        path.join(process.cwd(), 'src/app/core/Presenters')
+        path.join(process.cwd(), 'src/app/core/Presenter')
     );
 
     const presenterChoices = [
@@ -70,7 +70,7 @@ export default async function generatePresenter() {
 
     const serviceChoices = [
         { title: 'Without service', value: null },
-        ...services.map(s => ({ title: `${s}Service`, value: `${s}Service` }))
+        ...services.map(s => ({ title: `${s}`, value: s }))
     ];
 
     const { service } = await prompts({
@@ -81,12 +81,11 @@ export default async function generatePresenter() {
     });
 
     const pascalName = toPascalCase(name);
-    const contextName = toPascalCase(context);
-    const presenterPath = path.join(contextPath, 'Delivery', 'Presenters');
-    const filePath = path.join(presenterPath, `${pascalName}Presenter.ts`);
+    const modulePath = path.join(contextPath, 'Delivery', pascalName);
+    const filePath = path.join(modulePath, `${pascalName}Presenter.ts`);
 
     const serviceImport = service
-        ? `import { ApplicationProvider } from '../../Application/index.js';`
+        ? `import { ApplicationProvider } from '$${context}/Application';`
         : '';
 
     const serviceInit = service
@@ -95,19 +94,20 @@ export default async function generatePresenter() {
 
     const content = presenterType === 'package'
         ? presenterWithPackageTemplate
-            .replace(/{{contextName}}/g, contextName)
             .replace(/{{name}}/g, pascalName)
             .replace(/{{serviceImport}}/g, serviceImport)
             .replace(/{{serviceInit}}/g, serviceInit)
         : presenterWithCoreTemplate
-            .replace(/{{contextName}}/g, contextName)
             .replace(/{{name}}/g, pascalName)
             .replace(/{{corePresenter}}/g, presenterType)
             .replace(/{{serviceImport}}/g, serviceImport)
             .replace(/{{serviceInit}}/g, serviceInit);
 
     await writeIfNotExists(filePath, content);
-    await updateIndexTs(presenterPath);
+    await writeIfNotExists(
+        path.join(modulePath, 'index.ts'),
+        `export * from './${pascalName}Presenter';`
+    );
 
     console.log(`✅ Presenter created at ${filePath}`);
 }

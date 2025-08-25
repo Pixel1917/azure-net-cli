@@ -2,7 +2,6 @@ import fs from 'fs/promises';
 import path from 'path';
 import { loadUserConfig } from '../../utils/loadConfig.js';
 
-const BASE_STRUCTURE = ['Domain', 'Infrastructure', 'Application', 'Delivery'];
 const APP_ROOT = path.join(process.cwd(), 'src', 'app');
 const CONTEXTS_PATH = path.join(APP_ROOT, 'contexts');
 const CORE_PATH = path.join(APP_ROOT, 'core');
@@ -16,32 +15,34 @@ async function createDirIfNotExists(dirPath) {
     }
 }
 
-async function createBaseStructure(root) {
-    for (const section of BASE_STRUCTURE) {
-        const sectionPath = path.join(root, section);
-        await createDirIfNotExists(sectionPath);
-
-        if (section === 'Infrastructure') {
-            await createDirIfNotExists(path.join(sectionPath, 'Repositories'));
-            await createDirIfNotExists(path.join(sectionPath, 'Datasources'));
-            await createDirIfNotExists(path.join(sectionPath, 'DTO'));
-            await createDirIfNotExists(path.join(sectionPath, 'Providers'));
-        }
-        if (section === 'Application') {
-            await createDirIfNotExists(path.join(sectionPath, 'Services'));
-            await createDirIfNotExists(path.join(sectionPath, 'Providers'));
-        }
-        if (section === 'Domain') {
-            await createDirIfNotExists(path.join(sectionPath, 'Entities'));
-            await createDirIfNotExists(path.join(sectionPath, 'Ports'));
-        }
-        if (section === 'Delivery') {
-            await createDirIfNotExists(path.join(sectionPath, 'Presenters'));
-            await createDirIfNotExists(path.join(sectionPath, 'Schemas'));
-            await createDirIfNotExists(path.join(sectionPath, 'Actions'));
-            await createDirIfNotExists(path.join(sectionPath, 'Stores'));
-        }
+async function createIndexFile(dirPath, exportPatterns = []) {
+    const indexPath = path.join(dirPath, 'index.ts');
+    if (exportPatterns.length > 0) {
+        const content = exportPatterns.map(pattern => `export * from '${pattern}';`).join('\n') + '\n';
+        await fs.writeFile(indexPath, content, 'utf-8');
     }
+}
+
+async function createBaseStructure(root) {
+    // Domain
+    const domainPath = path.join(root, 'Domain');
+    await createDirIfNotExists(path.join(domainPath, 'Entities'));
+    await createDirIfNotExists(path.join(domainPath, 'Ports'));
+
+    // Infrastructure
+    const infraPath = path.join(root, 'Infrastructure');
+    await createDirIfNotExists(path.join(infraPath, 'Http', 'Repositories'));
+    await createDirIfNotExists(path.join(infraPath, 'Http', 'Datasource'));
+    await createDirIfNotExists(path.join(infraPath, 'Providers'));
+
+    // Application
+    const appPath = path.join(root, 'Application');
+    await createDirIfNotExists(path.join(appPath, 'Services'));
+    await createDirIfNotExists(path.join(appPath, 'Providers'));
+
+    // Delivery - organized by modules, not by type
+    const deliveryPath = path.join(root, 'Delivery');
+    await createDirIfNotExists(deliveryPath);
 }
 
 export default async function initStructure() {
@@ -58,12 +59,21 @@ export default async function initStructure() {
 
     // Create core structure
     await createDirIfNotExists(CORE_PATH);
-    await createDirIfNotExists(path.join(CORE_PATH, 'Datasources'));
-    await createDirIfNotExists(path.join(CORE_PATH, 'Responses'));
-    await createDirIfNotExists(path.join(CORE_PATH, 'Schemas'));
+    await createDirIfNotExists(path.join(CORE_PATH, 'Datasource'));
+    await createDirIfNotExists(path.join(CORE_PATH, 'Response'));
+    await createDirIfNotExists(path.join(CORE_PATH, 'Schema'));
     await createDirIfNotExists(path.join(CORE_PATH, 'Middleware'));
-    await createDirIfNotExists(path.join(CORE_PATH, 'Presenters'));
-    await createDirIfNotExists(path.join(CORE_PATH, 'Translations'));
+    await createDirIfNotExists(path.join(CORE_PATH, 'Presenter'));
+    await createDirIfNotExists(path.join(CORE_PATH, 'Translation'));
+
+    // Create core index.ts that exports all subdirectories
+    await createIndexFile(CORE_PATH, [
+        './Schema',
+        './Datasource',
+        './Response',
+        './Middleware',
+        './Translation'
+    ]);
 
     console.log('✅ Structure initialization complete!');
 }

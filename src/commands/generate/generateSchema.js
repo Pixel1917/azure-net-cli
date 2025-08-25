@@ -3,8 +3,8 @@ import path from 'path';
 import { selectContext, getContextPath, toPascalCase, getAvailableFiles } from '../../utils/contextUtils.js';
 import { writeIfNotExists, updateIndexTs } from '../../utils/fileUtils.js';
 
-const schemaWithCoreTemplate = `import { {{coreSchema}} } from '$core/Schemas/index.js';
-import type { I{{name}}Request } from '../../Domain/Ports/{{name}}/index.js';
+const schemaWithCoreTemplate = `import { {{coreSchema}} } from '$core/Schema';
+import type { I{{name}}Request } from '${{context}}/Domain/Ports/{{entity}}';
 
 export const {{name}}Schema = {{coreSchema}}<I{{name}}Request>()
 \t.rules((rules) => ({
@@ -12,10 +12,13 @@ export const {{name}}Schema = {{coreSchema}}<I{{name}}Request>()
 \t}))
 \t.create();`;
 
-const schemaWithPackageTemplate = `import { schema } from '@azure-net/kit';
-import type { I{{name}}Request } from '../../Domain/Ports/{{name}}/index.js';
+const schemaWithPackageTemplate = `import { createSchemaFactory } from '@azure-net/kit';
+import { createRules, validationMessagesI18n } from '@azure-net/kit/schema';
+import type { I{{name}}Request } from '${{context}}/Domain/Ports/{{entity}}';
 
-export const {{name}}Schema = schema<I{{name}}Request>()
+const Schema = createSchemaFactory(createRules(validationMessagesI18n));
+
+export const {{name}}Schema = Schema<I{{name}}Request>()
 \t.rules((rules) => ({
 \t\t// Add validation rules here
 \t}))
@@ -29,6 +32,12 @@ export default async function generateSchema() {
         return;
     }
 
+    const { module } = await prompts({
+        type: 'text',
+        name: 'module',
+        message: 'Module name (folder in Delivery):'
+    });
+
     const { name } = await prompts({
         type: 'text',
         name: 'name',
@@ -37,11 +46,11 @@ export default async function generateSchema() {
 
     // Check for core schemas
     const coreSchemas = await getAvailableFiles(
-        path.join(process.cwd(), 'src/app/core/Schemas')
+        path.join(process.cwd(), 'src/app/core/Schema')
     );
 
     const choices = [
-        { title: 'Use schema from package', value: 'package' },
+        { title: 'Use createSchemaFactory from package', value: 'package' },
         ...coreSchemas.map(s => ({ title: `Use ${s} from core`, value: s }))
     ];
 
@@ -53,18 +62,34 @@ export default async function generateSchema() {
     });
 
     const pascalName = toPascalCase(name);
+    const moduleName = toPascalCase(module);
     const contextPath = getContextPath(context);
-    const schemaPath = path.join(contextPath, 'Delivery', 'Schemas');
+    const schemaPath = path.join(contextPath, 'Delivery', moduleName, 'Schema');
     const filePath = path.join(schemaPath, `${pascalName}Schema.ts`);
 
     const content = schemaType === 'package'
-        ? schemaWithPackageTemplate.replace(/{{name}}/g, pascalName)
+        ? schemaWithPackageTemplate
+            .replace(/{{name}}/g, pascalName)
+            .replace(/{{context}}/g, context)
+            .replace(/{{entity}}/g, moduleName)
         : schemaWithCoreTemplate
             .replace(/{{name}}/g, pascalName)
+            .replace(/{{context}}/g, context)
+            .replace(/{{entity}}/g, moduleName)
             .replace(/{{coreSchema}}/g, schemaType);
 
     await writeIfNotExists(filePath, content);
     await updateIndexTs(schemaPath);
+
+    // Update module index
+    const moduleIndexPath = path.join(contextPath, 'Delivery', moduleName, 'index.ts');
+    if (await fs.access(moduleIndexPath).then(() => true).catch(() => false)) {
+        let indexContent = await fs.readFile(moduleIndexPath, 'utf-8');
+        if (!indexContent.includes(`export * from './Schema'`)) {
+            indexContent += `\nexport * from './Schema';`;
+            await fs.writeFile(moduleIndexPath, indexContent, 'utf-8');
+        }
+    }
 
     console.log(`✅ Schema created at ${filePath}`);
 }

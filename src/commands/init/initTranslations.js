@@ -1,11 +1,11 @@
 import { writeIfNotExists, updateIndexTs, injectIntoFile } from '../../utils/fileUtils.js';
 import path from 'path';
 
-const translationsPath = path.join(process.cwd(), 'src/app/core/Translations');
+const translationsPath = path.join(process.cwd(), 'src/app/core/Translation');
 const layoutServerPath = path.join(process.cwd(), 'src/routes/+layout.server.ts');
 const layoutTsPath = path.join(process.cwd(), 'src/routes/+layout.ts');
 
-const translationProviderTemplate = `import { messages } from './Locales/index.js';
+const translationProviderTemplate = `import { messages } from './Locales';
 import { createTranslations } from '@azure-net/kit/i18n';
 
 export const Translation = createTranslations({ 
@@ -28,8 +28,8 @@ const ruLocaleTemplate = `export default {
 };`;
 
 const localesIndexTemplate = `export const messages = {
-\ten: () => import('./en.js').then((res) => res.default),
-\tru: () => import('./ru.js').then((res) => res.default)
+\ten: () => import('./en').then((res) => res.default),
+\tru: () => import('./ru').then((res) => res.default)
 };`;
 
 export default async function initTranslations() {
@@ -54,13 +54,11 @@ export default async function initTranslations() {
         localesIndexTemplate
     );
 
-    await updateIndexTs(translationsPath);
-
     // Add to hooks.server.ts
     await injectIntoFile(
         path.join(process.cwd(), 'src/hooks.server.ts'),
         'import',
-        `import { Translation } from '$core/Translations/index.js';`,
+        `import { Translation } from '$core';`,
         'before'
     );
 
@@ -71,18 +69,25 @@ export default async function initTranslations() {
         'after'
     );
 
+    await injectIntoFile(
+        path.join(process.cwd(), 'src/hooks.server.ts'),
+        'transformPageChunk: ({ html })',
+        ' => {\n\t\t\t\tconst serialized = serialize(html);\n\t\t\t\treturn applyHtmlLocaleAttr(serialized);\n\t\t\t}',
+        'after'
+    );
+
     // Add to layout files
     await injectIntoFile(
         layoutServerPath,
         'export const load',
-        `\treturn { lang: locals.lang, user: locals.user };`,
+        `\treturn { lang: locals.lang };`,
         'after'
     );
 
     await injectIntoFile(
         layoutTsPath,
         'import',
-        `import { Translation } from '$core/Translations/index.js';`,
+        `import { Translation } from '$core';\nimport { browser } from '$app/environment';`,
         'before'
     );
 

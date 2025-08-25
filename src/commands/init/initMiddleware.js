@@ -16,12 +16,11 @@ export default async function initMiddleware() {
         `export * from './MiddlewareManager';`
     );
 
-
     // Add to hooks.server.ts
     await injectIntoFile(
         hooksServerPath,
-        `import { serverMiddleware } from '$core/Middleware';`,
         'import',
+        `import { serverMiddleware } from '$core';`,
         'before'
     );
 
@@ -36,7 +35,7 @@ export default async function initMiddleware() {
     await injectIntoFile(
         layoutPath,
         '<script',
-        `\timport { clientMiddleware } from '$core/Middleware';\n\tclientMiddleware();`,
+        `\timport { clientMiddleware } from '$core';\n\tclientMiddleware();`,
         'after'
     );
 

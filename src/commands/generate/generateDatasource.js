@@ -3,11 +3,16 @@ import { selectContext, getContextPath, toPascalCase } from '../../utils/context
 import { writeIfNotExists, updateIndexTs } from '../../utils/fileUtils.js';
 import path from 'path';
 
-const datasourceTemplate = `import { BaseHttpDatasource, HttpService } from '@azure-net/kit/infra';
+const datasourceTemplate = `import { BaseHttpDatasource } from '@azure-net/kit/infra';
+import { HttpService } from '@azure-net/kit/infra';
 
 export class {{name}}Datasource extends BaseHttpDatasource {
 \tconstructor() {
-\t\tsuper({ http: new HttpService({ baseUrl: '' }) });
+\t\tsuper({ 
+\t\t\thttp: new HttpService({ 
+\t\t\t\tbaseUrl: 'https://api.example.com'
+\t\t\t}) 
+\t\t});
 \t}
 }`;
 
@@ -17,14 +22,14 @@ export default async function generateDatasource() {
     const { name } = await prompts({
         type: 'text',
         name: 'name',
-        message: 'Datasource name (PascalCase):'
+        message: 'Datasource name (without "Datasource" suffix):'
     });
 
     const pascalName = toPascalCase(name);
     const contextPath = getContextPath(context);
     const datasourcePath = context === 'core'
-        ? path.join(contextPath, 'Datasources')
-        : path.join(contextPath, 'Infrastructure', 'Datasources');
+        ? path.join(contextPath, 'Datasource')
+        : path.join(contextPath, 'Infrastructure', 'Http', 'Datasource');
 
     const content = datasourceTemplate.replace(/{{name}}/g, pascalName);
     const filePath = path.join(datasourcePath, `${pascalName}Datasource.ts`);

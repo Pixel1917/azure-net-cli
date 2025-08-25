@@ -1,7 +1,7 @@
 import prompts from 'prompts';
 import fs from 'fs/promises';
 import path from 'path';
-import { selectContext, getContextPath, toPascalCase, getAvailableFiles } from '../../utils/contextUtils.js';
+import { selectContext, getContextPath, toPascalCase, getAvailableFiles, toCamelCase } from '../../utils/contextUtils.js';
 import { writeIfNotExists, updateIndexTs } from '../../utils/fileUtils.js';
 import { ensureProvider, addToProvider } from '../../utils/providerUtils.js';
 
@@ -34,15 +34,15 @@ export default async function generateRepository() {
     // Get available datasources
     const contextPath = getContextPath(context);
     const coreDatasources = await getAvailableFiles(
-        path.join(process.cwd(), 'src/app/core/Datasources')
+        path.join(process.cwd(), 'src/app/core/Datasource')
     );
     const contextDatasources = await getAvailableFiles(
-        path.join(contextPath, 'Infrastructure', 'Datasources')
+        path.join(contextPath, 'Infrastructure', 'Http', 'Datasource')
     );
 
     const allDatasources = [
-        ...coreDatasources.map(d => ({ title: `${d}Datasource (core)`, value: { name: `${d}Datasource`, from: 'core' } })),
-        ...contextDatasources.map(d => ({ title: `${d}Datasource (${context})`, value: { name: `${d}Datasource`, from: context } }))
+        ...coreDatasources.map(d => ({ title: `${d} (core)`, value: { name: d, from: 'core' } })),
+        ...contextDatasources.map(d => ({ title: `${d} (${context})`, value: { name: d, from: context } }))
     ];
 
     if (allDatasources.length === 0) {
@@ -58,40 +58,45 @@ export default async function generateRepository() {
     });
 
     const pascalName = toPascalCase(name);
-    const repoPath = path.join(contextPath, 'Infrastructure', 'Repositories');
+    const contextName = toPascalCase(context);
+    const repoPath = path.join(contextPath, 'Infrastructure', 'Http', 'Repositories');
     const filePath = path.join(repoPath, `${pascalName}Repository.ts`);
 
     // Generate repository
     const datasourceImport = datasource.from === 'core'
-        ? '$core/Datasources/index.js'
-        : '../Datasources/index.js';
+        ? '$core/Datasource'
+        : '../Datasource';
 
     const content = repositoryTemplate
         .replace(/{{name}}/g, pascalName)
         .replace(/{{datasource}}/g, datasource.name)
         .replace(/{{datasourceImport}}/g, datasourceImport)
-        .replace(/{{datasourceVar}}/g, toPascalCase(datasource.name).charAt(0).toLowerCase() + toPascalCase(datasource.name).slice(1));
+        .replace(/{{datasourceVar}}/g, toCamelCase(datasource.name));
 
     await writeIfNotExists(filePath, content);
     await updateIndexTs(repoPath);
 
     // Ensure DatasourceProvider exists
-    const datasourceProvider = await ensureProvider(context, 'Infrastructure', { datasource: datasource.name });
+    const datasourceProviderPath = path.join(contextPath, 'Infrastructure', 'Providers', 'DatasourceProvider.ts');
+    if (!(await fs.access(datasourceProviderPath).then(() => true).catch(() => false))) {
+        const datasourceProviderContent = `import { createBoundaryProvider } from '@azure-net/kit';
+import { ${datasource.name} } from '${datasource.from === 'core' ? '$core/Datasource' : '../Http/Datasource'}';
 
-    // Ensure InfrastructureProvider exists and add repository
-    const infraProvider = await ensureProvider(context, 'Infrastructure', { datasource: datasource.name });
+export const DatasourceProvider = createBoundaryProvider('${contextName}DatasourceProvider', () => ({
+\t${datasource.name}: () => new ${datasource.name}()
+}));`;
+        await writeIfNotExists(datasourceProviderPath, datasourceProviderContent);
+        await updateIndexTs(path.dirname(datasourceProviderPath));
+    }
+
+    // Ensure InfrastructureProvider and add repository
+    const infraProvider = await ensureProvider(context, 'Infrastructure', { hasDatasource: true });
     await addToProvider(
         infraProvider.path,
         `${pascalName}Repository`,
-        '../Repositories/index.js'
+        '../Http/Repositories',
+        `DatasourceProvider.${datasource.name}`
     );
-
-    // Add datasource dependency to repository in provider
-    let providerContent = await fs.readFile(infraProvider.path, 'utf-8');
-    const repoFactory = `${pascalName}Repository: () => new ${pascalName}Repository()`;
-    const repoWithDatasource = `${pascalName}Repository: () => new ${pascalName}Repository(DatasourceProvider.${datasource.name})`;
-    providerContent = providerContent.replace(repoFactory, repoWithDatasource);
-    await fs.writeFile(infraProvider.path, providerContent, 'utf-8');
 
     console.log(`✅ Repository created at ${filePath}`);
 }

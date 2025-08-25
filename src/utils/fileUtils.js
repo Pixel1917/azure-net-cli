@@ -20,11 +20,30 @@ export async function updateIndexTs(dir, filePattern = '.ts', ignore = ['index.t
             f.endsWith(filePattern) && !ignore.includes(f)
         );
         const content = files
-            .map(f => `export * from './${f.replace('.ts', '')}.js';`)
+            .map(f => `export * from './${f.replace('.ts', '')}';`)
             .join('\n') + '\n';
         await fs.writeFile(path.join(dir, 'index.ts'), content, 'utf-8');
     } catch (error) {
         // Directory doesn't exist yet
+    }
+}
+
+export async function ensureIndexExports(layerPath) {
+    try {
+        const subdirs = await fs.readdir(layerPath, { withFileTypes: true });
+        const exportLines = subdirs
+            .filter(d => d.isDirectory())
+            .map(d => `export * from './${d.name}';`);
+
+        if (exportLines.length > 0) {
+            await fs.writeFile(
+                path.join(layerPath, 'index.ts'),
+                exportLines.join('\n') + '\n',
+                'utf-8'
+            );
+        }
+    } catch (error) {
+        // Directory doesn't exist
     }
 }
 
