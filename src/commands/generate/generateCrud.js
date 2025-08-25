@@ -13,7 +13,9 @@ const entityTemplate = `export interface I{{name}} {
 \tupdated_at: string;
 }`;
 
-const portsIndexTemplate = `export interface I{{name}}Collection {
+const portsIndexTemplate = `import type { I{{name}} } from '../../Entities/{{name}}';
+
+export interface I{{name}}Collection {
 \tdata: I{{name}}[];
 \ttotal: number;
 }
@@ -26,20 +28,22 @@ export interface I{{name}}CollectionQuery {
 
 export interface I{{name}}CreateRequest {
 \t// Add request fields here
+\t[key: string]: unknown;
 }
 
 export interface I{{name}}UpdateRequest {
-\t// Add request fields here  
+\t// Add request fields here
+\t[key: string]: unknown;
 }`;
 
 const repositoryTemplate = `import { {{datasource}} } from '{{datasourceImport}}';
-import type { I{{name}} } from '${{context}}/Domain/Entities/{{name}}';
+import type { I{{name}} } from '\${{context}}/Domain/Entities/{{name}}';
 import type { 
 \tI{{name}}Collection,
 \tI{{name}}CollectionQuery,
 \tI{{name}}CreateRequest,
 \tI{{name}}UpdateRequest
-} from '${{context}}/Domain/Ports/{{name}}';
+} from '\${{context}}/Domain/Ports/{{name}}';
 
 export class {{name}}Repository {
 \tprivate endpoint = '{{endpoint}}';
@@ -93,7 +97,7 @@ export class {{name}}Service extends ClassMirror<{{name}}Repository> {
 }`;
 
 const createSchemaTemplate = `import { {{schemaFactory}} } from '{{schemaImport}}';
-import type { I{{name}}CreateRequest } from '${{context}}/Domain/Ports/{{name}}';
+import type { I{{name}}CreateRequest } from '\${{context}}/Domain/Ports/{{name}}';
 
 export const Create{{name}}Schema = {{schemaFactory}}<I{{name}}CreateRequest>()
 \t.rules((rules) => ({
@@ -102,7 +106,7 @@ export const Create{{name}}Schema = {{schemaFactory}}<I{{name}}CreateRequest>()
 \t.create();`;
 
 const updateSchemaTemplate = `import { {{schemaFactory}} } from '{{schemaImport}}';
-import type { I{{name}}UpdateRequest } from '${{context}}/Domain/Ports/{{name}}';
+import type { I{{name}}UpdateRequest } from '\${{context}}/Domain/Ports/{{name}}';
 
 export const Update{{name}}Schema = {{schemaFactory}}<I{{name}}UpdateRequest>()
 \t.rules((rules) => ({
@@ -111,13 +115,13 @@ export const Update{{name}}Schema = {{schemaFactory}}<I{{name}}UpdateRequest>()
 \t.create();`;
 
 const presenterTemplate = `import { {{presenterFactory}} } from '{{presenterImport}}';
-import { ApplicationProvider } from '${{context}}/Application';
+import { ApplicationProvider } from '\${{context}}/Application';
 import { Create{{name}}Schema, Update{{name}}Schema } from './Schema';
 import type { 
 \tI{{name}}CollectionQuery,
 \tI{{name}}CreateRequest,
 \tI{{name}}UpdateRequest
-} from '${{context}}/Domain/Ports/{{name}}';
+} from '\${{context}}/Domain/Ports/{{name}}';
 
 export const {{name}}Presenter = {{presenterFactory}}('{{name}}Presenter', ({ createAsyncResource, createAsyncAction }) => {
 \tconst { {{name}}Service } = ApplicationProvider();
@@ -236,7 +240,7 @@ export default async function generateCrud() {
     const repoPath = path.join(contextPath, 'Infrastructure', 'Http', 'Repositories');
     const datasourceImport = datasource.from === 'core'
         ? '$core/Datasource'
-        : `$${context}/Infrastructure/Http/Datasource`;
+        : `\$${context}/Infrastructure/Http/Datasource`;
 
     await writeIfNotExists(
         path.join(repoPath, `${pascalName}Repository.ts`),
@@ -265,28 +269,54 @@ export default async function generateCrud() {
     const schemaPath = path.join(deliveryModulePath, 'Schema');
 
     // Create schemas
-    const schemaFactory = schemaType === 'package' ? 'createSchemaFactory' : schemaType;
+    const schemaFactory = schemaType === 'package' ? 'Schema' : schemaType;
     const schemaImport = schemaType === 'package'
         ? '@azure-net/kit'
         : '$core/Schema';
 
-    await writeIfNotExists(
-        path.join(schemaPath, `Create${pascalName}Schema.ts`),
-        createSchemaTemplate
-            .replace(/{{name}}/g, pascalName)
-            .replace(/{{context}}/g, context)
-            .replace(/{{schemaFactory}}/g, schemaFactory)
-            .replace(/{{schemaImport}}/g, schemaImport)
-    );
+    if (schemaType === 'package') {
+        // Add the import for createSchemaFactory and rules
+        const schemaImportFull = `import { createSchemaFactory } from '@azure-net/kit';
+import { createRules, validationMessagesI18n } from '@azure-net/kit/schema';
 
-    await writeIfNotExists(
-        path.join(schemaPath, `Update${pascalName}Schema.ts`),
-        updateSchemaTemplate
-            .replace(/{{name}}/g, pascalName)
-            .replace(/{{context}}/g, context)
-            .replace(/{{schemaFactory}}/g, schemaFactory)
-            .replace(/{{schemaImport}}/g, schemaImport)
-    );
+const Schema = createSchemaFactory(createRules(validationMessagesI18n));`;
+
+        await writeIfNotExists(
+            path.join(schemaPath, `Create${pascalName}Schema.ts`),
+            schemaImportFull + '\n' + createSchemaTemplate
+                .replace('import { {{schemaFactory}} } from \'{{schemaImport}}\';\n', '')
+                .replace(/{{name}}/g, pascalName)
+                .replace(/{{context}}/g, context)
+                .replace(/{{schemaFactory}}/g, 'Schema')
+        );
+
+        await writeIfNotExists(
+            path.join(schemaPath, `Update${pascalName}Schema.ts`),
+            schemaImportFull + '\n' + updateSchemaTemplate
+                .replace('import { {{schemaFactory}} } from \'{{schemaImport}}\';\n', '')
+                .replace(/{{name}}/g, pascalName)
+                .replace(/{{context}}/g, context)
+                .replace(/{{schemaFactory}}/g, 'Schema')
+        );
+    } else {
+        await writeIfNotExists(
+            path.join(schemaPath, `Create${pascalName}Schema.ts`),
+            createSchemaTemplate
+                .replace(/{{name}}/g, pascalName)
+                .replace(/{{context}}/g, context)
+                .replace(/{{schemaFactory}}/g, schemaFactory)
+                .replace(/{{schemaImport}}/g, schemaImport)
+        );
+
+        await writeIfNotExists(
+            path.join(schemaPath, `Update${pascalName}Schema.ts`),
+            updateSchemaTemplate
+                .replace(/{{name}}/g, pascalName)
+                .replace(/{{context}}/g, context)
+                .replace(/{{schemaFactory}}/g, schemaFactory)
+                .replace(/{{schemaImport}}/g, schemaImport)
+        );
+    }
     await updateIndexTs(schemaPath);
 
     // 6. Create Presenter

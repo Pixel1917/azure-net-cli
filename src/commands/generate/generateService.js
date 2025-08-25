@@ -6,7 +6,7 @@ import { writeIfNotExists, updateIndexTs } from '../../utils/fileUtils.js';
 import { ensureProvider, addToProvider } from '../../utils/providerUtils.js';
 
 const serviceTemplate = `import { ClassMirror } from '@azure-net/kit';
-import { {{repository}} } from '../../Infrastructure/Repositories/index.js';
+import { {{repository}} } from '../../Infrastructure/Http/Repositories';
 
 export class {{name}}Service extends ClassMirror<{{repository}}> {
 \tconstructor(private {{repositoryVar}}: {{repository}}) {
@@ -42,12 +42,12 @@ export default async function generateService() {
     // Get available repositories
     const contextPath = getContextPath(context);
     const repositories = await getAvailableFiles(
-        path.join(contextPath, 'Infrastructure', 'Repositories')
+        path.join(contextPath, 'Infrastructure', 'Http', 'Repositories')
     );
 
     const choices = [
         { title: 'Without repository', value: null },
-        ...repositories.map(r => ({ title: `${r}Repository`, value: `${r}Repository` }))
+        ...repositories.map(r => ({ title: `${r}`, value: r }))
     ];
 
     const { repository } = await prompts({
@@ -74,19 +74,20 @@ export default async function generateService() {
 
     // Ensure ApplicationProvider exists and add service
     const appProvider = await ensureProvider(context, 'Application', { infrastructure: true });
-    await addToProvider(
-        appProvider.path,
-        `${pascalName}Service`,
-        '../Services/index.js'
-    );
 
-    // Add repository dependency if selected
     if (repository) {
-        let providerContent = await fs.readFile(appProvider.path, 'utf-8');
-        const serviceFactory = `${pascalName}Service: () => new ${pascalName}Service()`;
-        const serviceWithRepo = `${pascalName}Service: () => new ${pascalName}Service(InfrastructureProvider.${repository})`;
-        providerContent = providerContent.replace(serviceFactory, serviceWithRepo);
-        await fs.writeFile(appProvider.path, providerContent, 'utf-8');
+        await addToProvider(
+            appProvider.path,
+            `${pascalName}Service`,
+            '../Services',
+            `InfrastructureProvider.${repository}`
+        );
+    } else {
+        await addToProvider(
+            appProvider.path,
+            `${pascalName}Service`,
+            '../Services'
+        );
     }
 
     console.log(`✅ Service created at ${filePath}`);

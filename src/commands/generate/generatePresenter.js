@@ -3,7 +3,7 @@ import path from 'path';
 import { selectContext, getContextPath, toPascalCase, getAvailableFiles } from '../../utils/contextUtils.js';
 import { writeIfNotExists, updateIndexTs } from '../../utils/fileUtils.js';
 
-const presenterWithCoreTemplate = `import { {{corePresenter}} } from '$core/Presenter';
+const presenterWithCoreTemplate = `import { {{corePresenter}} } from '\$core/Presenter';
 {{serviceImport}}
 
 export const {{name}}Presenter = {{corePresenter}}('{{name}}Presenter', ({ createAsyncResource, createAsyncAction }) => {
@@ -85,7 +85,7 @@ export default async function generatePresenter() {
     const filePath = path.join(modulePath, `${pascalName}Presenter.ts`);
 
     const serviceImport = service
-        ? `import { ApplicationProvider } from '$${context}/Application';`
+        ? `import { ApplicationProvider } from '\$${context}/Application';`
         : '';
 
     const serviceInit = service

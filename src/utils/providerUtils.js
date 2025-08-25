@@ -43,7 +43,7 @@ function generateProviderContent(context, layer, dependencies) {
     }
 
     if (dependencies.infrastructure && layer === 'Application') {
-        imports.push(`import { InfrastructureProvider } from '$${context}/Infrastructure';`);
+        imports.push(`import { InfrastructureProvider } from '\$${context}/Infrastructure';`);
         deps.push('InfrastructureProvider');
     }
 
