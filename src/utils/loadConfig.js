@@ -8,7 +8,8 @@ export async function loadUserConfig() {
         return userConfig.default || {};
     } catch {
         return {
-            modules: ['admin', 'auth'],
+            contexts: ['app'],
+            defaultContext: 'app'
         };
     }
 }

@@ -1,36 +1,90 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
-import generateRequest from '../src/commands/generateRequest.js';
-import generateDatasource from '../src/commands/generateDatasource.js';
-import generateRepo from '../src/commands/generateRepo.js';
-import generateService from '../src/commands/generateService.js';
-import generateCrud from '../src/commands/generateCrud.js';
-import initLint from '../src/commands/initLint.js';
-import initStructure from '../src/commands/generateStructure.js';
-import initAliases from '../src/commands/initAliases.js';
+import {
+    initStructure,
+    initAliases,
+    initMiddleware,
+    initEdges,
+    initTranslations,
+    initSchema
+} from '../src/commands/init/index.js';
+import {
+    generateDatasource,
+    generateResponse,
+    generateRepository,
+    generateService,
+    generateSchema,
+    generatePresenter,
+    generateModule,
+    generateCrud
+} from '../src/commands/generate/index.js';
 
 const program = new Command();
 
 program
     .name('azure-net')
-    .description('Universal code generator')
-    .version('1.0.0');
+    .description('Azure-Net CLI generator')
+    .version('2.0.0');
 
+// Init commands
+program
+    .command('init:structure')
+    .description('Generate base folder structure')
+    .action(initStructure);
+
+program
+    .command('init:aliases')
+    .description('Generate alias mappings')
+    .action(initAliases);
+
+program
+    .command('init:middleware')
+    .description('Initialize middleware')
+    .action(initMiddleware);
+
+program
+    .command('init:edges')
+    .description('Initialize edges-svelte')
+    .action(initEdges);
+
+program
+    .command('init:translations')
+    .description('Initialize translations')
+    .action(initTranslations);
+
+program
+    .command('init:schema')
+    .description('Initialize schema factory')
+    .action(initSchema);
+
+program
+    .command('init')
+    .description('Run all initialization steps')
+    .action(async () => {
+        await initStructure();
+        await initAliases();
+        await initEdges();
+        await initMiddleware();
+        await initTranslations();
+        await initSchema();
+    });
+
+// Generate commands
 program
     .command('make:datasource')
     .description('Generate datasource')
     .action(generateDatasource);
 
 program
-    .command('make:repo')
-    .description('Generate repo')
-    .action(generateRepo);
+    .command('make:response')
+    .description('Generate response builder')
+    .action(generateResponse);
 
 program
-    .command('make:request')
-    .description('Generate request')
-    .action(generateRequest);
+    .command('make:repo')
+    .description('Generate repository')
+    .action(generateRepository);
 
 program
     .command('make:service')
@@ -38,32 +92,23 @@ program
     .action(generateService);
 
 program
+    .command('make:schema')
+    .description('Generate schema')
+    .action(generateSchema);
+
+program
+    .command('make:presenter')
+    .description('Generate presenter')
+    .action(generatePresenter);
+
+program
+    .command('make:module')
+    .description('Generate complete module')
+    .action(generateModule);
+
+program
     .command('make:crud')
-    .description('Generate CRUD Domain/Repo/Service')
+    .description('Generate CRUD module')
     .action(generateCrud);
-
-program
-    .command('init:lint')
-    .description('Setup linting and commit tools')
-    .action(initLint)
-
-program
-    .command('init:structure')
-    .description('Generate base folder structure based on config')
-    .action(initStructure);
-
-program
-    .command('init:aliases')
-    .description('Generate alias mappings for modules or default architecture')
-    .action(initAliases);
-
-program
-    .command('init')
-    .description('Run all initialization steps: structure, aliases, lint')
-    .action(async () => {
-        await initStructure();
-        await initAliases();
-        await initLint();
-    });
 
 program.parse();
