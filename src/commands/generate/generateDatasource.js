@@ -3,7 +3,7 @@ import { selectContext, getContextPath, toPascalCase } from '../../utils/context
 import { writeIfNotExists, updateIndexTs } from '../../utils/fileUtils.js';
 import path from 'path';
 
-const datasourceTemplate = `import { BaseHttpDatasource, HttpService } from '@azure-net/kit';
+const datasourceTemplate = `import { BaseHttpDatasource, HttpService } from '@azure-net/kit/infra';
 
 export class {{name}}Datasource extends BaseHttpDatasource {
 \tconstructor() {

@@ -7,7 +7,8 @@ import {
     initMiddleware,
     initEdges,
     initTranslations,
-    initSchema
+    initSchema,
+    initLint
 } from '../src/commands/init/index.js';
 import {
     generateDatasource,
@@ -28,6 +29,11 @@ program
     .version('2.0.0');
 
 // Init commands
+program
+    .command('init:lint')
+    .description('Setup linting and commit tools')
+    .action(initLint)
+
 program
     .command('init:structure')
     .description('Generate base folder structure')

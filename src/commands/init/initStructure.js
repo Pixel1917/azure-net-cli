@@ -24,6 +24,7 @@ async function createBaseStructure(root) {
         if (section === 'Infrastructure') {
             await createDirIfNotExists(path.join(sectionPath, 'Repositories'));
             await createDirIfNotExists(path.join(sectionPath, 'Datasources'));
+            await createDirIfNotExists(path.join(sectionPath, 'DTO'));
             await createDirIfNotExists(path.join(sectionPath, 'Providers'));
         }
         if (section === 'Application') {
