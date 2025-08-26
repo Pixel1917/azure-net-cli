@@ -10,7 +10,7 @@ export const {{name}}Presenter = {{corePresenter}}('{{name}}Presenter', ({ creat
 \t{{serviceInit}}
 \t
 \tconst example = async () => {
-\t\t// Implement presenter logic
+\t\t// Using async helpers from core presenter factory
 \t\treturn await createAsyncResource(Promise.resolve({}));
 \t};
 \t
@@ -24,8 +24,8 @@ export const {{name}}Presenter = createPresenter('{{name}}Presenter', () => {
 \t{{serviceInit}}
 \t
 \tconst example = async () => {
-\t\t// Implement presenter logic
-\t\treturn {};
+\t\t// Direct method without async helpers
+\t\treturn await Promise.resolve({});
 \t};
 \t
 \treturn { example };
@@ -65,12 +65,12 @@ export default async function generatePresenter() {
     // Get available services
     const contextPath = getContextPath(context);
     const services = await getAvailableFiles(
-        path.join(contextPath, 'Application', 'Services')
+        path.join(contextPath, 'Application/Services')
     );
 
     const serviceChoices = [
         { title: 'Without service', value: null },
-        ...services.map(s => ({ title: `${s}`, value: s }))
+        ...services.map(s => ({ title: s, value: s }))
     ];
 
     const { service } = await prompts({

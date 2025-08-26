@@ -3,9 +3,9 @@ import fs from 'fs/promises';
 import path from 'path';
 import { selectContext, getContextPath, toPascalCase, toCamelCase, getAvailableFiles } from '../../utils/contextUtils.js';
 import { writeIfNotExists, updateIndexTs, ensureIndexExports } from '../../utils/fileUtils.js';
-import { ensureProvider, addToProvider } from '../../utils/providerUtils.js';
+import { ensureProvider, addToProvider, ensureDatasourceProvider } from '../../utils/providerUtils.js';
 
-// Templates for CRUD generation
+// Templates remain the same as before...
 const entityTemplate = `export interface I{{name}} {
 \tid: number;
 \t// Add entity fields here
@@ -13,7 +13,7 @@ const entityTemplate = `export interface I{{name}} {
 \tupdated_at: string;
 }`;
 
-const portsIndexTemplate = `import type { I{{name}} } from '../../Entities/{{name}}';
+const portsIndexTemplate = `import type { I{{name}} } from '\${{context}}/Domain/Entities/{{name}}';
 
 export interface I{{name}}Collection {
 \tdata: I{{name}}[];
@@ -82,7 +82,7 @@ export class {{name}}Repository {
 }`;
 
 const serviceTemplate = `import { ClassMirror } from '@azure-net/kit';
-import { {{name}}Repository } from '../../Infrastructure/Http/Repositories';
+import { {{name}}Repository } from '\${{context}}/Infrastructure/Http/Repositories';
 
 export class {{name}}Service extends ClassMirror<{{name}}Repository> {
 \tconstructor(private {{camelName}}Repository: {{name}}Repository) {
@@ -114,7 +114,7 @@ export const Update{{name}}Schema = {{schemaFactory}}<I{{name}}UpdateRequest>()
 \t}))
 \t.create();`;
 
-const presenterTemplate = `import { {{presenterFactory}} } from '{{presenterImport}}';
+const presenterWithCoreTemplate = `import { {{presenterFactory}} } from '\$core/Presenter';
 import { ApplicationProvider } from '\${{context}}/Application';
 import { Create{{name}}Schema, Update{{name}}Schema } from './Schema';
 import type { 
@@ -140,6 +140,36 @@ export const {{name}}Presenter = {{presenterFactory}}('{{name}}Presenter', ({ cr
 \t
 \tconst remove = async (id: number) => 
 \t\tawait createAsyncAction({{name}}Service.remove(id));
+\t
+\treturn { collection, resource, create, update, remove };
+});`;
+
+const presenterWithoutCoreTemplate = `import { createPresenter } from '@azure-net/kit';
+import { ApplicationProvider } from '\${{context}}/Application';
+import { Create{{name}}Schema, Update{{name}}Schema } from './Schema';
+import type { 
+\tI{{name}}CollectionQuery,
+\tI{{name}}CreateRequest,
+\tI{{name}}UpdateRequest
+} from '\${{context}}/Domain/Ports/{{name}}';
+
+export const {{name}}Presenter = createPresenter('{{name}}Presenter', () => {
+\tconst { {{name}}Service } = ApplicationProvider();
+\t
+\tconst collection = async (query?: I{{name}}CollectionQuery) => 
+\t\tawait {{name}}Service.collection(query);
+\t
+\tconst resource = async (id: number) => 
+\t\tawait {{name}}Service.resource(id);
+\t
+\tconst create = async (request: I{{name}}CreateRequest) =>
+\t\tawait {{name}}Service.create(Create{{name}}Schema.from(request).json());
+\t
+\tconst update = async (id: number, request: I{{name}}UpdateRequest) =>
+\t\tawait {{name}}Service.update(id, Update{{name}}Schema.from(request).json());
+\t
+\tconst remove = async (id: number) => 
+\t\tawait {{name}}Service.remove(id);
 \t
 \treturn { collection, resource, create, update, remove };
 });`;
@@ -221,14 +251,14 @@ export default async function generateCrud() {
     console.log('\n🚀 Generating CRUD module...\n');
 
     // 1. Create Entity
-    const entityPath = path.join(contextPath, 'Domain', 'Entities', pascalName);
+    const entityPath = path.join(contextPath, 'Domain/Entities', pascalName);
     await writeIfNotExists(
         path.join(entityPath, 'index.ts'),
         entityTemplate.replace(/{{name}}/g, pascalName)
     );
 
     // 2. Create Ports
-    const portsPath = path.join(contextPath, 'Domain', 'Ports', pascalName);
+    const portsPath = path.join(contextPath, 'Domain/Ports', pascalName);
     await writeIfNotExists(
         path.join(portsPath, 'index.ts'),
         portsIndexTemplate
@@ -237,7 +267,7 @@ export default async function generateCrud() {
     );
 
     // 3. Create Repository
-    const repoPath = path.join(contextPath, 'Infrastructure', 'Http', 'Repositories');
+    const repoPath = path.join(contextPath, 'Infrastructure/Http/Repositories');
     const datasourceImport = datasource.from === 'core'
         ? '$core/Datasource'
         : `\$${context}/Infrastructure/Http/Datasource`;
@@ -255,12 +285,13 @@ export default async function generateCrud() {
     await updateIndexTs(repoPath);
 
     // 4. Create Service
-    const servicePath = path.join(contextPath, 'Application', 'Services');
+    const servicePath = path.join(contextPath, 'Application/Services');
     await writeIfNotExists(
         path.join(servicePath, `${pascalName}Service.ts`),
         serviceTemplate
             .replace(/{{name}}/g, pascalName)
             .replace(/{{camelName}}/g, camelName)
+            .replace(/{{context}}/g, context)
     );
     await updateIndexTs(servicePath);
 
@@ -275,7 +306,6 @@ export default async function generateCrud() {
         : '$core/Schema';
 
     if (schemaType === 'package') {
-        // Add the import for createSchemaFactory and rules
         const schemaImportFull = `import { createSchemaFactory } from '@azure-net/kit';
 import { createRules, validationMessagesI18n } from '@azure-net/kit/schema';
 
@@ -320,10 +350,11 @@ const Schema = createSchemaFactory(createRules(validationMessagesI18n));`;
     await updateIndexTs(schemaPath);
 
     // 6. Create Presenter
+    const presenterTemplate = presenterType === 'package'
+        ? presenterWithoutCoreTemplate
+        : presenterWithCoreTemplate;
+
     const presenterFactory = presenterType === 'package' ? 'createPresenter' : presenterType;
-    const presenterImport = presenterType === 'package'
-        ? '@azure-net/kit'
-        : '$core/Presenter';
 
     await writeIfNotExists(
         path.join(deliveryModulePath, `${pascalName}Presenter.ts`),
@@ -331,7 +362,6 @@ const Schema = createSchemaFactory(createRules(validationMessagesI18n));`;
             .replace(/{{name}}/g, pascalName)
             .replace(/{{context}}/g, context)
             .replace(/{{presenterFactory}}/g, presenterFactory)
-            .replace(/{{presenterImport}}/g, presenterImport)
     );
 
     // Create module index
@@ -342,24 +372,14 @@ const Schema = createSchemaFactory(createRules(validationMessagesI18n));`;
 
     // 7. Setup Providers
     // Ensure DatasourceProvider
-    const datasourceProviderPath = path.join(contextPath, 'Infrastructure', 'Providers', 'DatasourceProvider.ts');
-    if (!(await fs.access(datasourceProviderPath).then(() => true).catch(() => false))) {
-        const datasourceProviderContent = `import { createBoundaryProvider } from '@azure-net/kit';
-import { ${datasource.name} } from '${datasource.from === 'core' ? '$core/Datasource' : '../Http/Datasource'}';
-
-export const DatasourceProvider = createBoundaryProvider('${contextName}DatasourceProvider', () => ({
-\t${datasource.name}: () => new ${datasource.name}()
-}));`;
-        await writeIfNotExists(datasourceProviderPath, datasourceProviderContent);
-        await updateIndexTs(path.dirname(datasourceProviderPath));
-    }
+    await ensureDatasourceProvider(context, datasource.name, datasource.from === 'core');
 
     // Ensure InfrastructureProvider
-    const infraProvider = await ensureProvider(context, 'Infrastructure', {});
+    const infraProvider = await ensureProvider(context, 'Infrastructure', { hasDatasource: true });
     await addToProvider(
         infraProvider.path,
         `${pascalName}Repository`,
-        '../Http/Repositories',
+        `\$${context}/Infrastructure/Http/Repositories`,
         `DatasourceProvider.${datasource.name}`
     );
 
@@ -368,7 +388,7 @@ export const DatasourceProvider = createBoundaryProvider('${contextName}Datasour
     await addToProvider(
         appProvider.path,
         `${pascalName}Service`,
-        '../Services',
+        `\$${context}/Application/Services`,
         `InfrastructureProvider.${pascalName}Repository`
     );
 

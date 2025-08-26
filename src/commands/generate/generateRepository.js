@@ -3,7 +3,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { selectContext, getContextPath, toPascalCase, getAvailableFiles, toCamelCase } from '../../utils/contextUtils.js';
 import { writeIfNotExists, updateIndexTs } from '../../utils/fileUtils.js';
-import { ensureProvider, addToProvider } from '../../utils/providerUtils.js';
+import { ensureProvider, addToProvider, ensureDatasourceProvider } from '../../utils/providerUtils.js';
 
 const repositoryTemplate = `import { {{datasource}} } from '{{datasourceImport}}';
 
@@ -37,7 +37,7 @@ export default async function generateRepository() {
         path.join(process.cwd(), 'src/app/core/Datasource')
     );
     const contextDatasources = await getAvailableFiles(
-        path.join(contextPath, 'Infrastructure', 'Http', 'Datasource')
+        path.join(contextPath, 'Infrastructure/Http/Datasource')
     );
 
     const allDatasources = [
@@ -59,7 +59,7 @@ export default async function generateRepository() {
 
     const pascalName = toPascalCase(name);
     const contextName = toPascalCase(context);
-    const repoPath = path.join(contextPath, 'Infrastructure', 'Http', 'Repositories');
+    const repoPath = path.join(contextPath, 'Infrastructure/Http/Repositories');
     const filePath = path.join(repoPath, `${pascalName}Repository.ts`);
 
     // Generate repository
@@ -77,24 +77,14 @@ export default async function generateRepository() {
     await updateIndexTs(repoPath);
 
     // Ensure DatasourceProvider exists
-    const datasourceProviderPath = path.join(contextPath, 'Infrastructure', 'Providers', 'DatasourceProvider.ts');
-    if (!(await fs.access(datasourceProviderPath).then(() => true).catch(() => false))) {
-        const datasourceProviderContent = `import { createBoundaryProvider } from '@azure-net/kit';
-import { ${datasource.name} } from '${datasource.from === 'core' ? '$core/Datasource' : '../Http/Datasource'}';
-
-export const DatasourceProvider = createBoundaryProvider('${contextName}DatasourceProvider', () => ({
-\t${datasource.name}: () => new ${datasource.name}()
-}));`;
-        await writeIfNotExists(datasourceProviderPath, datasourceProviderContent);
-        await updateIndexTs(path.dirname(datasourceProviderPath));
-    }
+    await ensureDatasourceProvider(context, datasource.name, datasource.from === 'core');
 
     // Ensure InfrastructureProvider and add repository
     const infraProvider = await ensureProvider(context, 'Infrastructure', { hasDatasource: true });
     await addToProvider(
         infraProvider.path,
         `${pascalName}Repository`,
-        '../Http/Repositories',
+        `\$${context}/Infrastructure/Http/Repositories`,
         `DatasourceProvider.${datasource.name}`
     );
 

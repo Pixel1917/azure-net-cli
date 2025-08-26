@@ -1,9 +1,9 @@
 import prompts from 'prompts';
+import path from 'path';
 import { selectContext, getContextPath, toPascalCase } from '../../utils/contextUtils.js';
 import { writeIfNotExists, updateIndexTs } from '../../utils/fileUtils.js';
-import path from 'path';
 
-const responseTemplate = `import { ResponseBuilder } from '@azure-net/kit';
+const responseTemplate = `import { ResponseBuilder } from '@azure-net/kit/infra';
 
 export interface I{{name}}Response<T = unknown> {
 \tdata: T;
@@ -23,14 +23,14 @@ export default async function generateResponse() {
     const { name } = await prompts({
         type: 'text',
         name: 'name',
-        message: 'Response name (PascalCase):'
+        message: 'Response name (without "Response" suffix):'
     });
 
     const pascalName = toPascalCase(name);
     const contextPath = getContextPath(context);
     const responsePath = context === 'core'
-        ? path.join(contextPath, 'Responses')
-        : path.join(contextPath, 'Infrastructure', 'Responses');
+        ? path.join(contextPath, 'Response')
+        : path.join(contextPath, 'Infrastructure/Response');
 
     const content = responseTemplate.replace(/{{name}}/g, pascalName);
     const filePath = path.join(responsePath, `${pascalName}Response.ts`);

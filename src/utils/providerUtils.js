@@ -35,7 +35,6 @@ function generateProviderContent(context, layer, dependencies) {
 
     let imports = [`import { createBoundaryProvider } from '@azure-net/kit';`];
     let deps = [];
-    let depParams = '';
 
     if (dependencies.hasDatasource && layer === 'Infrastructure') {
         imports.push(`import { DatasourceProvider } from './DatasourceProvider';`);
@@ -47,10 +46,7 @@ function generateProviderContent(context, layer, dependencies) {
         deps.push('InfrastructureProvider');
     }
 
-    if (deps.length > 0) {
-        depParams = `{ ${deps.join(', ')} }`;
-    }
-
+    const depParams = deps.length > 0 ? `{ ${deps.join(', ')} }` : '';
     const dependsOnStr = deps.length > 0
         ? `,\n\t{ dependsOn: { ${deps.join(', ')} } }`
         : '';
@@ -59,7 +55,7 @@ function generateProviderContent(context, layer, dependencies) {
 
 export const ${varName} = createBoundaryProvider(
 \t'${boundaryName}',
-\t(${depParams ? depParams : ''}) => ({
+\t(${depParams}) => ({
 \t\t// Services will be added here
 \t})${dependsOnStr}
 );`;
@@ -68,12 +64,69 @@ export const ${varName} = createBoundaryProvider(
 export async function addToProvider(providerPath, serviceName, importPath, dependency = null) {
     let content = await fs.readFile(providerPath, 'utf-8');
 
-    // Add import if not exists
-    const importStatement = `import { ${serviceName} } from '${importPath}';`;
-    if (!content.includes(serviceName)) {
-        const lastImportIndex = content.lastIndexOf('import ');
-        const endOfImportLine = content.indexOf('\n', lastImportIndex);
-        content = content.slice(0, endOfImportLine + 1) + importStatement + '\n' + content.slice(endOfImportLine + 1);
+    // Parse existing imports to group them
+    const importRegex = /^import\s+{([^}]+)}\s+from\s+['"]([^'"]+)['"]/gm;
+    const imports = new Map();
+    let match;
+
+    while ((match = importRegex.exec(content)) !== null) {
+        const [fullMatch, importedItems, fromPath] = match;
+        if (!imports.has(fromPath)) {
+            imports.set(fromPath, new Set());
+        }
+        importedItems.split(',').forEach(item => {
+            imports.get(fromPath).add(item.trim());
+        });
+    }
+
+    // Add new import to the map
+    if (!Array.from(imports.values()).some(set => set.has(serviceName))) {
+        if (!imports.has(importPath)) {
+            imports.set(importPath, new Set());
+        }
+        imports.get(importPath).add(serviceName);
+    }
+
+    // Rebuild import section
+    const newImports = [`import { createBoundaryProvider } from '@azure-net/kit';`];
+
+    // Add DatasourceProvider import if exists
+    if (content.includes('DatasourceProvider') && !content.includes("import { DatasourceProvider }")) {
+        newImports.push(`import { DatasourceProvider } from './DatasourceProvider';`);
+    }
+
+    // Add other imports
+    for (const [fromPath, items] of imports) {
+        if (fromPath !== '@azure-net/kit' && !fromPath.includes('DatasourceProvider')) {
+            const itemsStr = Array.from(items).join(', ');
+            newImports.push(`import { ${itemsStr} } from '${fromPath}';`);
+        }
+    }
+
+    // Find where imports end and provider starts
+    const providerStartIndex = content.indexOf('export const');
+    const beforeProvider = content.substring(0, providerStartIndex);
+    const afterProvider = content.substring(providerStartIndex);
+
+    // Check if DatasourceProvider dependency needs to be added
+    let updatedAfterProvider = afterProvider;
+    if (dependency && dependency.includes('DatasourceProvider')) {
+        // Check if provider already has dependencies
+        if (!afterProvider.includes('({ DatasourceProvider })')) {
+            // Add DatasourceProvider to function params
+            updatedAfterProvider = updatedAfterProvider.replace(
+                /createBoundaryProvider\(\s*'[^']+',\s*\(\)/,
+                `createBoundaryProvider(\n\t'$1',\n\t({ DatasourceProvider })`
+            );
+
+            // Add dependsOn if not exists
+            if (!updatedAfterProvider.includes('dependsOn')) {
+                updatedAfterProvider = updatedAfterProvider.replace(
+                    /\)\s*\);$/,
+                    `),\n\t{ dependsOn: { DatasourceProvider } }\n);`
+                );
+            }
+        }
     }
 
     // Add factory method with dependency
@@ -81,27 +134,121 @@ export async function addToProvider(providerPath, serviceName, importPath, depen
         ? `\t\t${serviceName}: () => new ${serviceName}(${dependency})`
         : `\t\t${serviceName}: () => new ${serviceName}()`;
 
-    if (!content.includes(`${serviceName}:`)) {
+    if (!updatedAfterProvider.includes(`${serviceName}:`)) {
         // Find the position to insert
-        const returnIndex = content.indexOf('=> ({');
-        const endOfReturn = content.indexOf('\t})', returnIndex);
+        const returnIndex = updatedAfterProvider.indexOf('=> ({');
+        const endOfReturn = updatedAfterProvider.indexOf('\t})', returnIndex);
 
         // Check if there are existing services
-        const servicesSection = content.substring(returnIndex, endOfReturn);
-        const hasServices = servicesSection.includes(':');
+        const servicesSection = updatedAfterProvider.substring(returnIndex, endOfReturn);
+        const hasServices = servicesSection.includes(':') && !servicesSection.includes('// Services will be added here');
 
         if (hasServices) {
             // Add comma before new service
-            const beforeEnd = content.lastIndexOf('\n', endOfReturn);
-            content = content.slice(0, beforeEnd) + ',\n' + factoryLine + content.slice(beforeEnd);
+            const beforeEnd = updatedAfterProvider.lastIndexOf('\n', endOfReturn);
+            updatedAfterProvider = updatedAfterProvider.slice(0, beforeEnd) + ',\n' + factoryLine + updatedAfterProvider.slice(beforeEnd);
         } else {
             // First service, replace comment
-            content = content.replace(
+            updatedAfterProvider = updatedAfterProvider.replace(
                 '// Services will be added here',
                 factoryLine
             );
         }
     }
 
-    await fs.writeFile(providerPath, content, 'utf-8');
+    // Combine everything
+    const finalContent = newImports.join('\n') + '\n\n' + updatedAfterProvider;
+    await fs.writeFile(providerPath, finalContent, 'utf-8');
+}
+
+export async function ensureDatasourceProvider(context, datasourceName, isFromCore = true) {
+    const contextName = toPascalCase(context);
+    const contextPath = path.join(process.cwd(), 'src/app/contexts', context);
+    const providerPath = path.join(contextPath, 'Infrastructure/Providers/DatasourceProvider.ts');
+
+    try {
+        await fs.access(providerPath);
+        // Provider exists, add datasource if needed
+        await addDatasourceToProvider(providerPath, datasourceName, isFromCore);
+    } catch {
+        // Create new DatasourceProvider
+        const content = `import { createBoundaryProvider } from '@azure-net/kit';
+import { ${datasourceName} } from '${isFromCore ? '$core' : '../Http/Datasource'}';
+
+export const DatasourceProvider = createBoundaryProvider('${contextName}DatasourceProvider', () => ({
+\t${datasourceName}: () => new ${datasourceName}({})
+}));`;
+
+        await writeIfNotExists(providerPath, content);
+        await updateIndexTs(path.dirname(providerPath));
+    }
+}
+
+async function addDatasourceToProvider(providerPath, datasourceName, isFromCore = true) {
+    let content = await fs.readFile(providerPath, 'utf-8');
+
+    // Check if datasource already exists
+    if (content.includes(`${datasourceName}:`)) {
+        return;
+    }
+
+    // Parse existing imports to group them
+    const importRegex = /^import\s+{([^}]+)}\s+from\s+['"]([^'"]+)['"]/gm;
+    const imports = new Map();
+    let match;
+
+    while ((match = importRegex.exec(content)) !== null) {
+        const [fullMatch, importedItems, fromPath] = match;
+        if (!imports.has(fromPath)) {
+            imports.set(fromPath, new Set());
+        }
+        importedItems.split(',').forEach(item => {
+            imports.get(fromPath).add(item.trim());
+        });
+    }
+
+    // Add datasource to imports
+    const importPath = isFromCore ? '$core' : '../Http/Datasource';
+    if (!imports.has(importPath)) {
+        imports.set(importPath, new Set());
+    }
+    imports.get(importPath).add(datasourceName);
+
+    // Rebuild import section
+    const newImports = [`import { createBoundaryProvider } from '@azure-net/kit';`];
+    for (const [fromPath, items] of imports) {
+        if (fromPath !== '@azure-net/kit') {
+            const itemsStr = Array.from(items).join(', ');
+            newImports.push(`import { ${itemsStr} } from '${fromPath}';`);
+        }
+    }
+
+    // Find provider content
+    const providerStartIndex = content.indexOf('export const');
+    const afterProvider = content.substring(providerStartIndex);
+
+    // Add factory method
+    const factoryLine = `\t${datasourceName}: () => new ${datasourceName}({})`;
+
+    const returnIndex = afterProvider.indexOf('=> ({');
+    const endOfReturn = afterProvider.indexOf('})', returnIndex);
+
+    // Check if there are existing services
+    const servicesSection = afterProvider.substring(returnIndex, endOfReturn);
+    const hasServices = servicesSection.includes(':');
+
+    let updatedAfterProvider = afterProvider;
+    if (hasServices) {
+        // Add comma before new service
+        const beforeEnd = updatedAfterProvider.lastIndexOf('\n', endOfReturn);
+        updatedAfterProvider = updatedAfterProvider.slice(0, beforeEnd) + ',\n' + factoryLine + updatedAfterProvider.slice(beforeEnd);
+    } else {
+        // First service
+        const insertPoint = returnIndex + '=> ({\n'.length;
+        updatedAfterProvider = updatedAfterProvider.slice(0, insertPoint) + factoryLine + '\n' + updatedAfterProvider.slice(insertPoint);
+    }
+
+    // Combine everything
+    const finalContent = newImports.join('\n') + '\n\n' + updatedAfterProvider;
+    await fs.writeFile(providerPath, finalContent, 'utf-8');
 }

@@ -40,13 +40,28 @@ export async function getAvailableFiles(dir, pattern = '.ts') {
     }
 }
 
+// Fixed to preserve PascalCase properly
 export function toPascalCase(str) {
-    return str
-        .split(/[-_\s]+/)
-        .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    // If already in PascalCase with multiple words, preserve it
+    if (/^[A-Z][a-z]+(?:[A-Z][a-z]+)*$/.test(str)) {
+        return str;
+    }
+
+    // Split by common delimiters but preserve existing camelCase/PascalCase
+    const words = str.split(/[-_\s]+/);
+    return words
+        .map((word, index) => {
+            // If word is already in camelCase or PascalCase, preserve it
+            if (/[a-z][A-Z]/.test(word)) {
+                return word.charAt(0).toUpperCase() + word.slice(1);
+            }
+            // Otherwise capitalize first letter
+            return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+        })
         .join('');
 }
 
+// Fixed to preserve camelCase properly
 export function toCamelCase(str) {
     const pascal = toPascalCase(str);
     return pascal.charAt(0).toLowerCase() + pascal.slice(1);
