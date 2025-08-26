@@ -5,6 +5,7 @@ import { loadUserConfig } from '../../utils/loadConfig.js';
 const APP_ROOT = path.join(process.cwd(), 'src', 'app');
 const CONTEXTS_PATH = path.join(APP_ROOT, 'contexts');
 const SHARED_PATH = path.join(APP_ROOT, 'shared');
+const CORE_PATH = path.join(APP_ROOT, 'shared', 'core');
 
 async function createDirIfNotExists(dirPath) {
     try {

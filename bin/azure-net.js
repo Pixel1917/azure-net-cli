@@ -111,11 +111,6 @@ program
     .action(generatePresenter);
 
 program
-    .command('make:module')
-    .description('Generate complete module')
-    .action(generateModule);
-
-program
     .command('make:crud-base')
     .description('Generate CRUD repository and service')
     .action(generateCrudBase);
@@ -124,11 +119,6 @@ program
     .command('make:crud-presenter')
     .description('Generate CRUD presenter for existing service')
     .action(generateCrudPresenter);
-
-program
-    .command('make:presenter-by-service')
-    .description('Generate presenter from existing service')
-    .action(generatePresenterByService);
 
 program
     .command('make:service-by-repo')
