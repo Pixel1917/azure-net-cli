@@ -1,16 +1,17 @@
 import prompts from 'prompts';
 import path from 'path';
+import fs from 'fs/promises';
 import { selectContext, getContextPath, toPascalCase, getAvailableFiles } from '../../utils/contextUtils.js';
-import { writeIfNotExists, updateIndexTs } from '../../utils/fileUtils.js';
+import { writeIfNotExists } from '../../utils/fileUtils.js';
 
-const presenterWithCoreTemplate = `import { {{corePresenter}} } from '\$core/Presenter';
-{{serviceImport}}
+const presenterWithSharedTemplate = `import { {{sharedPresenter}} } from '$shared/Presenter';
+import { ApplicationProvider } from '\${{context}}/Application';
 
-export const {{name}}Presenter = {{corePresenter}}('{{name}}Presenter', ({ createAsyncResource, createAsyncAction }) => {
-\t{{serviceInit}}
+export const {{name}}Presenter = {{sharedPresenter}}('{{name}}Presenter', ({ createAsyncResource, createAsyncAction }) => {
+\tconst { /* extract services from ApplicationProvider */ } = ApplicationProvider();
 \t
 \tconst example = async () => {
-\t\t// Using async helpers from core presenter factory
+\t\t// Using async helpers from shared presenter factory
 \t\treturn await createAsyncResource(Promise.resolve({}));
 \t};
 \t
@@ -18,10 +19,10 @@ export const {{name}}Presenter = {{corePresenter}}('{{name}}Presenter', ({ creat
 });`;
 
 const presenterWithPackageTemplate = `import { createPresenter } from '@azure-net/kit';
-{{serviceImport}}
+import { ApplicationProvider } from '\${{context}}/Application';
 
 export const {{name}}Presenter = createPresenter('{{name}}Presenter', () => {
-\t{{serviceInit}}
+\tconst { /* extract services from ApplicationProvider */ } = ApplicationProvider();
 \t
 \tconst example = async () => {
 \t\t// Direct method without async helpers
@@ -34,25 +35,20 @@ export const {{name}}Presenter = createPresenter('{{name}}Presenter', () => {
 export default async function generatePresenter() {
     const context = await selectContext('Select context for presenter:');
 
-    if (context === 'core') {
-        console.error('❌ Cannot create presenter in core. Choose a specific context.');
-        return;
-    }
-
     const { name } = await prompts({
         type: 'text',
         name: 'name',
         message: 'Module name (will create folder in Delivery):'
     });
 
-    // Check for core presenters
-    const corePresenters = await getAvailableFiles(
-        path.join(process.cwd(), 'src/app/core/Presenter')
+    // Check for shared presenters
+    const sharedPresenters = await getAvailableFiles(
+        path.join(process.cwd(), 'src/app/shared/Presenter')
     );
 
     const presenterChoices = [
         { title: 'Use createPresenter from package', value: 'package' },
-        ...corePresenters.map(p => ({ title: `Use ${p} from core`, value: p }))
+        ...sharedPresenters.map(p => ({ title: `Use ${p} from shared`, value: p }))
     ];
 
     const { presenterType } = await prompts({
@@ -62,46 +58,19 @@ export default async function generatePresenter() {
         choices: presenterChoices
     });
 
-    // Get available services
-    const contextPath = getContextPath(context);
-    const services = await getAvailableFiles(
-        path.join(contextPath, 'Application/Services')
-    );
-
-    const serviceChoices = [
-        { title: 'Without service', value: null },
-        ...services.map(s => ({ title: s, value: s }))
-    ];
-
-    const { service } = await prompts({
-        type: 'select',
-        name: 'service',
-        message: 'Select service (optional):',
-        choices: serviceChoices
-    });
-
     const pascalName = toPascalCase(name);
+    const contextPath = getContextPath(context);
     const modulePath = path.join(contextPath, 'Delivery', pascalName);
     const filePath = path.join(modulePath, `${pascalName}Presenter.ts`);
-
-    const serviceImport = service
-        ? `import { ApplicationProvider } from '\$${context}/Application';`
-        : '';
-
-    const serviceInit = service
-        ? `const { ${service} } = ApplicationProvider();`
-        : '';
 
     const content = presenterType === 'package'
         ? presenterWithPackageTemplate
             .replace(/{{name}}/g, pascalName)
-            .replace(/{{serviceImport}}/g, serviceImport)
-            .replace(/{{serviceInit}}/g, serviceInit)
-        : presenterWithCoreTemplate
+            .replace(/{{context}}/g, context)
+        : presenterWithSharedTemplate
             .replace(/{{name}}/g, pascalName)
-            .replace(/{{corePresenter}}/g, presenterType)
-            .replace(/{{serviceImport}}/g, serviceImport)
-            .replace(/{{serviceInit}}/g, serviceInit);
+            .replace(/{{sharedPresenter}}/g, presenterType)
+            .replace(/{{context}}/g, context);
 
     await writeIfNotExists(filePath, content);
     await writeIfNotExists(
@@ -110,4 +79,5 @@ export default async function generatePresenter() {
     );
 
     console.log(`✅ Presenter created at ${filePath}`);
+    console.log(`\n💡 Remember to extract needed services from ApplicationProvider in the presenter.`);
 }

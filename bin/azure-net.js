@@ -18,7 +18,10 @@ import {
     generateSchema,
     generatePresenter,
     generateModule,
-    generateCrud
+    generateCrudBase,
+    generateCrudPresenter,
+    generatePresenterByService,
+    generateServiceByRepo
 } from '../src/commands/generate/index.js';
 
 const program = new Command();
@@ -32,7 +35,7 @@ program
 program
     .command('init:lint')
     .description('Setup linting and commit tools')
-    .action(initLint)
+    .action(initLint);
 
 program
     .command('init:structure')
@@ -70,10 +73,10 @@ program
     .action(async () => {
         await initStructure();
         await initAliases();
-        await initEdges();
-        await initMiddleware();
-        await initTranslations();
-        await initSchema();
+        // await initEdges();
+        // await initMiddleware();
+        // await initTranslations();
+        // await initSchema();
     });
 
 // Generate commands
@@ -113,8 +116,23 @@ program
     .action(generateModule);
 
 program
-    .command('make:crud')
-    .description('Generate CRUD module')
-    .action(generateCrud);
+    .command('make:crud-base')
+    .description('Generate CRUD repository and service')
+    .action(generateCrudBase);
+
+program
+    .command('make:crud-presenter')
+    .description('Generate CRUD presenter for existing service')
+    .action(generateCrudPresenter);
+
+program
+    .command('make:presenter-by-service')
+    .description('Generate presenter from existing service')
+    .action(generatePresenterByService);
+
+program
+    .command('make:service-by-repo')
+    .description('Generate service from existing repository')
+    .action(generateServiceByRepo);
 
 program.parse();

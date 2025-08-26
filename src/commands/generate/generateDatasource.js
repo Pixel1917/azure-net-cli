@@ -1,12 +1,10 @@
 import prompts from 'prompts';
 import path from 'path';
-import fs from 'fs/promises';
 import { selectContext, getContextPath, toPascalCase, getAvailableFiles } from '../../utils/contextUtils.js';
 import { writeIfNotExists, updateIndexTs } from '../../utils/fileUtils.js';
 
 const datasourceWithResponseTemplate = `import { BaseHttpDatasource, type CreateRequestCallbackType } from '@azure-net/kit/infra';
 import { {{responseClass}}, type {{responseInterface}} } from '{{responseImport}}';
-import { HttpService } from '@azure-net/kit/infra';
 
 export class {{name}}Datasource extends BaseHttpDatasource {
 \tasync createRequest<T>(callback: CreateRequestCallbackType<{{responseInterface}}<T>>) {
@@ -15,7 +13,7 @@ export class {{name}}Datasource extends BaseHttpDatasource {
 }`;
 
 export default async function generateDatasource() {
-    const context = await selectContext();
+    const context = await selectContext('Select context for datasource (or shared):');
 
     const { name } = await prompts({
         type: 'text',
@@ -24,21 +22,23 @@ export default async function generateDatasource() {
     });
 
     const pascalName = toPascalCase(name);
-    const contextPath = getContextPath(context);
+    const contextPath = context === 'shared'
+        ? path.join(process.cwd(), 'src/app/shared')
+        : getContextPath(context);
 
     // Get available responses
-    const coreResponses = await getAvailableFiles(
-        path.join(process.cwd(), 'src/app/core/Response')
+    const sharedResponses = await getAvailableFiles(
+        path.join(process.cwd(), 'src/app/shared/Response')
     );
 
-    const contextResponses = context !== 'core'
+    const contextResponses = context !== 'shared'
         ? await getAvailableFiles(path.join(contextPath, 'Infrastructure/Response'))
         : [];
 
     const allResponses = [
-        ...coreResponses.map(r => ({
-            title: `${r} (core)`,
-            value: { name: r, from: 'core' }
+        ...sharedResponses.map(r => ({
+            title: `${r} (shared)`,
+            value: { name: r, from: 'shared' }
         })),
         ...contextResponses.map(r => ({
             title: `${r} (${context})`,
@@ -61,15 +61,13 @@ export default async function generateDatasource() {
     // Determine interface name
     const responseInterface = `I${response.name.replace('Response', '')}Response`;
 
-    const datasourcePath = context === 'core'
+    const datasourcePath = context === 'shared'
         ? path.join(contextPath, 'Datasource')
         : path.join(contextPath, 'Infrastructure/Http/Datasource');
 
-    const responseImport = response.from === 'core'
-        ? context === 'core' ? '../Response' : '$core/Response'
-        : context === 'core'
-            ? `../contexts/${context}/Infrastructure/Response`
-            : '../../Response';
+    const responseImport = response.from === 'shared'
+        ? context === 'shared' ? '../Response' : '$shared/Response'
+        : `\$${context}/Infrastructure/Response`;
 
     const content = datasourceWithResponseTemplate
         .replace(/{{name}}/g, pascalName)
@@ -82,5 +80,4 @@ export default async function generateDatasource() {
     await updateIndexTs(datasourcePath);
 
     console.log(`✅ Datasource created at ${filePath}`);
-    console.log(`\n💡 Remember to configure the datasource in DatasourceProvider when using it in repositories.`);
 }

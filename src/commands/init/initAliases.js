@@ -10,7 +10,7 @@ function generateAliases(config) {
 
     return Object.fromEntries([
         ...contexts.map(c => [`$${c}`, `./src/app/contexts/${c}`]),
-        ['$core', './src/app/core'],
+        ['$shared', './src/app/shared'],
         ['$lib', './src/lib']
     ]);
 }

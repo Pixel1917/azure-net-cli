@@ -4,7 +4,7 @@ import prompts from 'prompts';
 import { loadUserConfig } from './loadConfig.js';
 
 const CONTEXTS_PATH = path.join(process.cwd(), 'src/app/contexts');
-const CORE_PATH = path.join(process.cwd(), 'src/app/core');
+const SHARED_PATH = path.join(process.cwd(), 'src/app/shared');
 
 export async function selectContext(message = 'Select context:') {
     const config = await loadUserConfig();
@@ -16,7 +16,7 @@ export async function selectContext(message = 'Select context:') {
         message,
         choices: [
             ...contexts.map(c => ({ title: c, value: c })),
-            { title: 'core (shared)', value: 'core' }
+            { title: 'shared (former core)', value: 'shared' }
         ]
     });
 
@@ -24,8 +24,8 @@ export async function selectContext(message = 'Select context:') {
 }
 
 export function getContextPath(context) {
-    return context === 'core'
-        ? CORE_PATH
+    return context === 'shared'
+        ? SHARED_PATH
         : path.join(CONTEXTS_PATH, context);
 }
 
@@ -35,6 +35,27 @@ export async function getAvailableFiles(dir, pattern = '.ts') {
         return files
             .filter(f => f.endsWith(pattern) && f !== 'index.ts')
             .map(f => f.replace(pattern, ''));
+    } catch {
+        return [];
+    }
+}
+
+export async function getApplicationProviderServices(context) {
+    const contextPath = getContextPath(context);
+    const providerPath = path.join(contextPath, 'Application/Providers/ApplicationProvider.ts');
+
+    try {
+        const content = await fs.readFile(providerPath, 'utf-8');
+        // Extract service names from ApplicationProvider
+        const serviceRegex = /(\w+Service):\s*\(/g;
+        const services = [];
+        let match;
+
+        while ((match = serviceRegex.exec(content)) !== null) {
+            services.push(match[1]);
+        }
+
+        return services;
     } catch {
         return [];
     }

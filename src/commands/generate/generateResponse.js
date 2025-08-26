@@ -5,20 +5,11 @@ import { writeIfNotExists, updateIndexTs } from '../../utils/fileUtils.js';
 
 const responseTemplate = `import { ResponseBuilder } from '@azure-net/kit/infra';
 
-export interface I{{name}}Response<T = unknown> {
-\tdata: T;
-\tsuccess: boolean;
-\tmessage: string;
-}
-
 export class {{name}}Response<TData = unknown, TMeta = unknown> extends ResponseBuilder<TData, TMeta, I{{name}}Response<TData>> {
-\toverride unwrapData(data: I{{name}}Response<TData>): TData {
-\t\treturn data.data;
-\t}
 }`;
 
 export default async function generateResponse() {
-    const context = await selectContext();
+    const context = await selectContext('Select context for response (or shared):');
 
     const { name } = await prompts({
         type: 'text',
@@ -27,8 +18,11 @@ export default async function generateResponse() {
     });
 
     const pascalName = toPascalCase(name);
-    const contextPath = getContextPath(context);
-    const responsePath = context === 'core'
+    const contextPath = context === 'shared'
+        ? path.join(process.cwd(), 'src/app/shared')
+        : getContextPath(context);
+
+    const responsePath = context === 'shared'
         ? path.join(contextPath, 'Response')
         : path.join(contextPath, 'Infrastructure/Response');
 

@@ -1,9 +1,7 @@
 import prompts from 'prompts';
-import fs from 'fs/promises';
 import path from 'path';
 import { selectContext, getContextPath, toPascalCase, getAvailableFiles, toCamelCase } from '../../utils/contextUtils.js';
 import { writeIfNotExists, updateIndexTs } from '../../utils/fileUtils.js';
-import { ensureProvider, addToProvider, ensureDatasourceProvider } from '../../utils/providerUtils.js';
 
 const repositoryTemplate = `import { {{datasource}} } from '{{datasourceImport}}';
 
@@ -20,11 +18,6 @@ export class {{name}}Repository {
 export default async function generateRepository() {
     const context = await selectContext('Select context for repository:');
 
-    if (context === 'core') {
-        console.error('❌ Cannot create repository in core. Choose a specific context.');
-        return;
-    }
-
     const { name } = await prompts({
         type: 'text',
         name: 'name',
@@ -33,15 +26,15 @@ export default async function generateRepository() {
 
     // Get available datasources
     const contextPath = getContextPath(context);
-    const coreDatasources = await getAvailableFiles(
-        path.join(process.cwd(), 'src/app/core/Datasource')
+    const sharedDatasources = await getAvailableFiles(
+        path.join(process.cwd(), 'src/app/shared/Datasource')
     );
     const contextDatasources = await getAvailableFiles(
         path.join(contextPath, 'Infrastructure/Http/Datasource')
     );
 
     const allDatasources = [
-        ...coreDatasources.map(d => ({ title: `${d} (core)`, value: { name: d, from: 'core' } })),
+        ...sharedDatasources.map(d => ({ title: `${d} (shared)`, value: { name: d, from: 'shared' } })),
         ...contextDatasources.map(d => ({ title: `${d} (${context})`, value: { name: d, from: context } }))
     ];
 
@@ -58,14 +51,13 @@ export default async function generateRepository() {
     });
 
     const pascalName = toPascalCase(name);
-    const contextName = toPascalCase(context);
     const repoPath = path.join(contextPath, 'Infrastructure/Http/Repositories');
     const filePath = path.join(repoPath, `${pascalName}Repository.ts`);
 
     // Generate repository
-    const datasourceImport = datasource.from === 'core'
-        ? '$core/Datasource'
-        : '../Datasource';
+    const datasourceImport = datasource.from === 'shared'
+        ? '$shared/Datasource'
+        : `\$${context}/Infrastructure/Http/Datasource`;
 
     const content = repositoryTemplate
         .replace(/{{name}}/g, pascalName)
@@ -76,17 +68,6 @@ export default async function generateRepository() {
     await writeIfNotExists(filePath, content);
     await updateIndexTs(repoPath);
 
-    // Ensure DatasourceProvider exists
-    await ensureDatasourceProvider(context, datasource.name, datasource.from === 'core');
-
-    // Ensure InfrastructureProvider and add repository
-    const infraProvider = await ensureProvider(context, 'Infrastructure', { hasDatasource: true });
-    await addToProvider(
-        infraProvider.path,
-        `${pascalName}Repository`,
-        `\$${context}/Infrastructure/Http/Repositories`,
-        `DatasourceProvider.${datasource.name}`
-    );
-
     console.log(`✅ Repository created at ${filePath}`);
+    console.log(`\n💡 Remember to manually add this repository to InfrastructureProvider when needed.`);
 }
