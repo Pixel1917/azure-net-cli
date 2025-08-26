@@ -5,7 +5,7 @@ import { writeIfNotExists, updateIndexTs } from '../../utils/fileUtils.js';
 
 const responseTemplate = `import { ResponseBuilder } from '@azure-net/kit/infra';
 
-export class {{name}}Response<TData = unknown, TMeta = unknown> extends ResponseBuilder<TData, TMeta, I{{name}}Response<TData>> {
+export class {{name}}Response<TData = unknown, TMeta = unknown> extends ResponseBuilder<TData, TMeta, TData> {
 }`;
 
 export default async function generateResponse() {
