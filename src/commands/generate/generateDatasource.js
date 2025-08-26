@@ -4,11 +4,11 @@ import { selectContext, getContextPath, toPascalCase, getAvailableFiles } from '
 import { writeIfNotExists, updateIndexTs } from '../../utils/fileUtils.js';
 
 const datasourceWithResponseTemplate = `import { BaseHttpDatasource, type CreateRequestCallbackType } from '@azure-net/kit/infra';
-import { {{responseClass}}, type {{responseInterface}} } from '{{responseImport}}';
+import { {{responseClass}} } from '{{responseImport}}';
 
 export class {{name}}Datasource extends BaseHttpDatasource {
-\tasync createRequest<T>(callback: CreateRequestCallbackType<{{responseInterface}}<T>>) {
-\t\treturn new {{responseClass}}<T>(await this.createRawRequest<{{responseInterface}}<T>>(callback));
+\tasync createRequest<T>(callback: CreateRequestCallbackType<T>) {
+\t\treturn new {{responseClass}}<T>(await this.createRawRequest<T>(callback));
 \t}
 }`;
 
