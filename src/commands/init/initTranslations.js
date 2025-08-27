@@ -1,7 +1,7 @@
-import { writeIfNotExists } from '../../utils/fileUtils.js';
+import { writeIfNotExists, updateCoreIndex } from '../../utils/fileUtils.js';
 import path from 'path';
 
-const translationsPath = path.join(process.cwd(), 'src/app/shared/Translation');
+const translationsPath = path.join(process.cwd(), 'src/app/core/Translation');
 
 const translationProviderTemplate = `import { messages } from './Locales';
 import { createTranslations } from '@azure-net/kit/i18n';
@@ -51,6 +51,9 @@ export default async function initTranslations() {
         path.join(translationsPath, 'Locales', 'index.ts'),
         localesIndexTemplate
     );
+
+    // Update core index
+    await updateCoreIndex();
 
     console.log('✅ Translations initialized');
 }

@@ -1,7 +1,7 @@
 import prompts from 'prompts';
 import path from 'path';
 import { selectContext, getContextPath, toPascalCase, getAvailableFiles, toCamelCase } from '../../utils/contextUtils.js';
-import { writeIfNotExists, updateIndexTs } from '../../utils/fileUtils.js';
+import { writeIfNotExists, updateIndexTs, updateCoreIndex } from '../../utils/fileUtils.js';
 
 const repositoryTemplate = `import { {{datasource}} } from '{{datasourceImport}}';
 
@@ -26,15 +26,15 @@ export default async function generateRepository() {
 
     // Get available datasources
     const contextPath = getContextPath(context);
-    const sharedDatasources = await getAvailableFiles(
-        path.join(process.cwd(), 'src/app/shared/Datasource')
+    const coreDatasources = await getAvailableFiles(
+        path.join(process.cwd(), 'src/app/core/Datasource')
     );
     const contextDatasources = await getAvailableFiles(
         path.join(contextPath, 'Infrastructure/Http/Datasource')
     );
 
     const allDatasources = [
-        ...sharedDatasources.map(d => ({ title: `${d} (shared)`, value: { name: d, from: 'shared' } })),
+        ...coreDatasources.map(d => ({ title: `${d} (core)`, value: { name: d, from: 'core' } })),
         ...contextDatasources.map(d => ({ title: `${d} (${context})`, value: { name: d, from: context } }))
     ];
 
@@ -55,8 +55,8 @@ export default async function generateRepository() {
     const filePath = path.join(repoPath, `${pascalName}Repository.ts`);
 
     // Generate repository
-    const datasourceImport = datasource.from === 'shared'
-        ? '$shared/Datasource'
+    const datasourceImport = datasource.from === 'core'
+        ? '$core/Datasource'
         : `\$${context}/Infrastructure/Http/Datasource`;
 
     const content = repositoryTemplate
@@ -67,6 +67,9 @@ export default async function generateRepository() {
 
     await writeIfNotExists(filePath, content);
     await updateIndexTs(repoPath);
+
+    // Update core index
+    await updateCoreIndex();
 
     console.log(`✅ Repository created at ${filePath}`);
     console.log(`\n💡 Remember to manually add this repository to InfrastructureProvider when needed.`);

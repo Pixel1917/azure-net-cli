@@ -8,8 +8,8 @@ export async function loadUserConfig() {
         return userConfig.default || {};
     } catch {
         return {
-            contexts: ['public'],
-            defaultContext: 'public'
+            contexts: ['web'],
+            defaultContext: 'web'
         };
     }
 }

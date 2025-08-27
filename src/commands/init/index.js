@@ -5,3 +5,4 @@ export { default as initEdges } from './initEdges.js';
 export { default as initTranslations } from './initTranslations.js';
 export { default as initSchema } from './initSchema.js';
 export { default as initLint } from './initLint.js';
+export { default as initPresenter } from './initPresenter.js';

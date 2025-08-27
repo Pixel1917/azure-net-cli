@@ -1,17 +1,16 @@
 import prompts from 'prompts';
 import path from 'path';
-import fs from 'fs/promises';
 import { selectContext, getContextPath, toPascalCase, getAvailableFiles } from '../../utils/contextUtils.js';
-import { writeIfNotExists } from '../../utils/fileUtils.js';
+import { writeIfNotExists, updateCoreIndex } from '../../utils/fileUtils.js';
 
-const presenterWithSharedTemplate = `import { {{sharedPresenter}} } from '$shared/Presenter';
+const presenterWithCoreTemplate = `import { {{corePresenter}} } from '$core/Presenter';
 import { ApplicationProvider } from '\${{context}}/Application';
 
-export const {{name}}Presenter = {{sharedPresenter}}('{{name}}Presenter', ({ createAsyncResource, createAsyncAction }) => {
+export const {{name}}Presenter = {{corePresenter}}('{{name}}Presenter', ({ createAsyncResource, createAsyncAction }) => {
 \tconst { /* extract services from ApplicationProvider */ } = ApplicationProvider();
 \t
 \tconst example = async () => {
-\t\t// Using async helpers from shared presenter factory
+\t\t// Using async helpers from core presenter factory
 \t\treturn await createAsyncResource(Promise.resolve({}));
 \t};
 \t
@@ -41,14 +40,14 @@ export default async function generatePresenter() {
         message: 'Module name (will create folder in Delivery):'
     });
 
-    // Check for shared presenters
-    const sharedPresenters = await getAvailableFiles(
-        path.join(process.cwd(), 'src/app/shared/Presenter')
+    // Check for core presenters
+    const corePresenters = await getAvailableFiles(
+        path.join(process.cwd(), 'src/app/core/Presenter')
     );
 
     const presenterChoices = [
         { title: 'Use createPresenter from package', value: 'package' },
-        ...sharedPresenters.map(p => ({ title: `Use ${p} from shared`, value: p }))
+        ...corePresenters.map(p => ({ title: `Use ${p} from core`, value: p }))
     ];
 
     const { presenterType } = await prompts({
@@ -67,9 +66,9 @@ export default async function generatePresenter() {
         ? presenterWithPackageTemplate
             .replace(/{{name}}/g, pascalName)
             .replace(/{{context}}/g, context)
-        : presenterWithSharedTemplate
+        : presenterWithCoreTemplate
             .replace(/{{name}}/g, pascalName)
-            .replace(/{{sharedPresenter}}/g, presenterType)
+            .replace(/{{corePresenter}}/g, presenterType)
             .replace(/{{context}}/g, context);
 
     await writeIfNotExists(filePath, content);
@@ -77,6 +76,9 @@ export default async function generatePresenter() {
         path.join(modulePath, 'index.ts'),
         `export * from './${pascalName}Presenter';`
     );
+
+    // Update core index
+    await updateCoreIndex();
 
     console.log(`✅ Presenter created at ${filePath}`);
     console.log(`\n💡 Remember to extract needed services from ApplicationProvider in the presenter.`);

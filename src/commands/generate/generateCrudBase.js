@@ -1,7 +1,7 @@
 import prompts from 'prompts';
 import path from 'path';
 import { selectContext, getContextPath, toPascalCase, toCamelCase, getAvailableFiles } from '../../utils/contextUtils.js';
-import { writeIfNotExists, updateIndexTs } from '../../utils/fileUtils.js';
+import { writeIfNotExists, updateIndexTs, updateCoreIndex } from '../../utils/fileUtils.js';
 
 // Templates for CRUD base generation
 const entityTemplate = `export interface I{{name}} {
@@ -11,7 +11,7 @@ const entityTemplate = `export interface I{{name}} {
 \tupdated_at: string;
 }`;
 
-const portsIndexTemplate = `import type { I{{name}} } from '\${{context}}/Domain/Entities/{{name}}';
+const portsIndexTemplate = `import type { I{{name}} } from '\${{context}}/Domain/{{name}}/Model';
 
 export interface I{{name}}Collection {
 \tdata: I{{name}}[];
@@ -35,13 +35,13 @@ export interface I{{name}}UpdateRequest {
 }`;
 
 const repositoryTemplate = `import { {{datasource}} } from '{{datasourceImport}}';
-import type { I{{name}} } from '\${{context}}/Domain/Entities/{{name}}';
 import type { 
+\tI{{name}},
 \tI{{name}}Collection,
 \tI{{name}}CollectionQuery,
 \tI{{name}}CreateRequest,
 \tI{{name}}UpdateRequest
-} from '\${{context}}/Domain/Ports/{{name}}';
+} from '\${{context}}/Domain/{{name}}';
 
 export class {{name}}Repository {
 \tprivate endpoint = '{{endpoint}}';
@@ -111,15 +111,15 @@ export default async function generateCrudBase() {
 
     // Get available datasources
     const contextPath = getContextPath(context);
-    const sharedDatasources = await getAvailableFiles(
-        path.join(process.cwd(), 'src/app/shared/Datasource')
+    const coreDatasources = await getAvailableFiles(
+        path.join(process.cwd(), 'src/app/core/Datasource')
     );
     const contextDatasources = await getAvailableFiles(
         path.join(contextPath, 'Infrastructure/Http/Datasource')
     );
 
     const allDatasources = [
-        ...sharedDatasources.map(d => ({ title: `${d} (shared)`, value: { name: d, from: 'shared' } })),
+        ...coreDatasources.map(d => ({ title: `${d} (core)`, value: { name: d, from: 'core' } })),
         ...contextDatasources.map(d => ({ title: `${d} (${context})`, value: { name: d, from: context } }))
     ];
 
@@ -135,15 +135,18 @@ export default async function generateCrudBase() {
 
     console.log('\n🚀 Generating CRUD base (repository & service)...\n');
 
-    // 1. Create Entity
-    const entityPath = path.join(contextPath, 'Domain/Entities', pascalName);
+    // 1. Create Domain structure
+    const domainPath = path.join(contextPath, 'Domain', pascalName);
+    const modelPath = path.join(domainPath, 'Model');
+    const portsPath = path.join(domainPath, 'Ports');
+
+    // Create Model
     await writeIfNotExists(
-        path.join(entityPath, 'index.ts'),
+        path.join(modelPath, 'index.ts'),
         entityTemplate.replace(/{{name}}/g, pascalName)
     );
 
-    // 2. Create Ports
-    const portsPath = path.join(contextPath, 'Domain/Ports', pascalName);
+    // Create Ports
     await writeIfNotExists(
         path.join(portsPath, 'index.ts'),
         portsIndexTemplate
@@ -151,10 +154,16 @@ export default async function generateCrudBase() {
             .replace(/{{context}}/g, context)
     );
 
-    // 3. Create Repository
+    // Create Domain module index
+    await writeIfNotExists(
+        path.join(domainPath, 'index.ts'),
+        `export * from './Model';\nexport * from './Ports';`
+    );
+
+    // 2. Create Repository
     const repoPath = path.join(contextPath, 'Infrastructure/Http/Repositories');
-    const datasourceImport = datasource.from === 'shared'
-        ? '$shared/Datasource'
+    const datasourceImport = datasource.from === 'core'
+        ? '$core/Datasource'
         : `\$${context}/Infrastructure/Http/Datasource`;
 
     await writeIfNotExists(
@@ -169,7 +178,7 @@ export default async function generateCrudBase() {
     );
     await updateIndexTs(repoPath);
 
-    // 4. Create Service
+    // 3. Create Service
     const servicePath = path.join(contextPath, 'Application/Services');
     await writeIfNotExists(
         path.join(servicePath, `${pascalName}Service.ts`),
@@ -179,6 +188,9 @@ export default async function generateCrudBase() {
             .replace(/{{context}}/g, context)
     );
     await updateIndexTs(servicePath);
+
+    // Update core index
+    await updateCoreIndex();
 
     console.log(`✅ CRUD base for ${pascalName} created successfully!`);
     console.log(`\n💡 Remember to:`);

@@ -1,7 +1,7 @@
 import prompts from 'prompts';
 import path from 'path';
 import { selectContext, getContextPath, toPascalCase } from '../../utils/contextUtils.js';
-import { writeIfNotExists, updateIndexTs } from '../../utils/fileUtils.js';
+import { writeIfNotExists, updateIndexTs, updateCoreIndex } from '../../utils/fileUtils.js';
 
 const responseTemplate = `import { ResponseBuilder } from '@azure-net/kit/infra';
 
@@ -9,7 +9,7 @@ export class {{name}}Response<TData = unknown, TMeta = unknown> extends Response
 }`;
 
 export default async function generateResponse() {
-    const context = await selectContext('Select context for response (or shared):');
+    const context = await selectContext('Select context for response (or core):');
 
     const { name } = await prompts({
         type: 'text',
@@ -18,11 +18,11 @@ export default async function generateResponse() {
     });
 
     const pascalName = toPascalCase(name);
-    const contextPath = context === 'shared'
-        ? path.join(process.cwd(), 'src/app/shared')
+    const contextPath = context === 'core'
+        ? path.join(process.cwd(), 'src/app/core')
         : getContextPath(context);
 
-    const responsePath = context === 'shared'
+    const responsePath = context === 'core'
         ? path.join(contextPath, 'Response')
         : path.join(contextPath, 'Infrastructure/Response');
 
@@ -31,6 +31,11 @@ export default async function generateResponse() {
 
     await writeIfNotExists(filePath, content);
     await updateIndexTs(responsePath);
+
+    // Update core index if needed
+    if (context === 'core') {
+        await updateCoreIndex();
+    }
 
     console.log(`✅ Response created at ${filePath}`);
 }

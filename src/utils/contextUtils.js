@@ -4,7 +4,7 @@ import prompts from 'prompts';
 import { loadUserConfig } from './loadConfig.js';
 
 const CONTEXTS_PATH = path.join(process.cwd(), 'src/app/contexts');
-const SHARED_PATH = path.join(process.cwd(), 'src/app/shared');
+const CORE_PATH = path.join(process.cwd(), 'src/app/core');
 
 export async function selectContext(message = 'Select context:') {
     const config = await loadUserConfig();
@@ -16,7 +16,7 @@ export async function selectContext(message = 'Select context:') {
         message,
         choices: [
             ...contexts.map(c => ({ title: c, value: c })),
-            { title: 'shared (former core)', value: 'shared' }
+            { title: 'core', value: 'core' }
         ]
     });
 
@@ -24,8 +24,8 @@ export async function selectContext(message = 'Select context:') {
 }
 
 export function getContextPath(context) {
-    return context === 'shared'
-        ? SHARED_PATH
+    return context === 'core'
+        ? CORE_PATH
         : path.join(CONTEXTS_PATH, context);
 }
 
@@ -61,28 +61,13 @@ export async function getApplicationProviderServices(context) {
     }
 }
 
-// Fixed to preserve PascalCase properly
 export function toPascalCase(str) {
-    // If already in PascalCase with multiple words, preserve it
-    if (/^[A-Z][a-z]+(?:[A-Z][a-z]+)*$/.test(str)) {
-        return str;
-    }
-
-    // Split by common delimiters but preserve existing camelCase/PascalCase
-    const words = str.split(/[-_\s]+/);
-    return words
-        .map((word, index) => {
-            // If word is already in camelCase or PascalCase, preserve it
-            if (/[a-z][A-Z]/.test(word)) {
-                return word.charAt(0).toUpperCase() + word.slice(1);
-            }
-            // Otherwise capitalize first letter
-            return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
-        })
+    return str
+        .split(/[-_\s]+/)
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
         .join('');
 }
 
-// Fixed to preserve camelCase properly
 export function toCamelCase(str) {
     const pascal = toPascalCase(str);
     return pascal.charAt(0).toLowerCase() + pascal.slice(1);

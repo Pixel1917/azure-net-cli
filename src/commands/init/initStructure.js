@@ -1,11 +1,12 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { loadUserConfig } from '../../utils/loadConfig.js';
+import { updateCoreIndex } from '../../utils/fileUtils.js';
 
 const APP_ROOT = path.join(process.cwd(), 'src', 'app');
 const CONTEXTS_PATH = path.join(APP_ROOT, 'contexts');
 const SHARED_PATH = path.join(APP_ROOT, 'shared');
-const CORE_PATH = path.join(APP_ROOT, 'shared', 'core');
+const CORE_PATH = path.join(APP_ROOT, 'core');
 
 async function createDirIfNotExists(dirPath) {
     try {
@@ -25,10 +26,9 @@ async function createIndexFile(dirPath, exportPatterns = []) {
 }
 
 async function createBaseStructure(root, contextName, contextAlias) {
-    // Domain
+    // Domain - новая структура
     const domainPath = path.join(root, 'Domain');
-    await createDirIfNotExists(path.join(domainPath, 'Entities'));
-    await createDirIfNotExists(path.join(domainPath, 'Ports'));
+    await createDirIfNotExists(domainPath);
 
     // Infrastructure
     const infraPath = path.join(root, 'Infrastructure');
@@ -119,23 +119,20 @@ export default async function initStructure() {
         await createBaseStructure(contextPath, contextName, context);
     }
 
-    // Create shared structure (former core)
+    // Create empty shared folder
     await createDirIfNotExists(SHARED_PATH);
-    await createDirIfNotExists(path.join(SHARED_PATH, 'Datasource'));
-    await createDirIfNotExists(path.join(SHARED_PATH, 'Response'));
-    await createDirIfNotExists(path.join(SHARED_PATH, 'Schema'));
-    await createDirIfNotExists(path.join(SHARED_PATH, 'Middleware'));
-    await createDirIfNotExists(path.join(SHARED_PATH, 'Presenter'));
-    await createDirIfNotExists(path.join(SHARED_PATH, 'Translation'));
 
-    // Create shared index.ts that exports all subdirectories
-    await createIndexFile(SHARED_PATH, [
-        './Schema',
-        './Datasource',
-        './Response',
-        './Middleware',
-        './Translation'
-    ]);
+    // Create core structure with all functionality
+    await createDirIfNotExists(CORE_PATH);
+    await createDirIfNotExists(path.join(CORE_PATH, 'Datasource'));
+    await createDirIfNotExists(path.join(CORE_PATH, 'Response'));
+    await createDirIfNotExists(path.join(CORE_PATH, 'Schema'));
+    await createDirIfNotExists(path.join(CORE_PATH, 'Middleware'));
+    await createDirIfNotExists(path.join(CORE_PATH, 'Presenter'));
+    await createDirIfNotExists(path.join(CORE_PATH, 'Translation'));
+
+    // Update core index
+    await updateCoreIndex();
 
     console.log('✅ Structure initialization complete!');
 }

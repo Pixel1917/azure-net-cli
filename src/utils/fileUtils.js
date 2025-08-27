@@ -28,6 +28,34 @@ export async function updateIndexTs(dir, filePattern = '.ts', ignore = ['index.t
     }
 }
 
+export async function updateCoreIndex() {
+    const corePath = path.join(process.cwd(), 'src/app/core');
+    try {
+        const dirs = await fs.readdir(corePath, { withFileTypes: true });
+        const validDirs = [];
+
+        for (const dir of dirs) {
+            if (dir.isDirectory()) {
+                // Check if directory has any files
+                const dirPath = path.join(corePath, dir.name);
+                const files = await fs.readdir(dirPath);
+                if (files.length > 0) {
+                    validDirs.push(dir.name);
+                }
+            }
+        }
+
+        if (validDirs.length > 0) {
+            const content = validDirs
+                .map(d => `export * from './${d}';`)
+                .join('\n') + '\n';
+            await fs.writeFile(path.join(corePath, 'index.ts'), content, 'utf-8');
+        }
+    } catch (error) {
+        // Core directory doesn't exist
+    }
+}
+
 export async function ensureIndexExports(layerPath) {
     try {
         const subdirs = await fs.readdir(layerPath, { withFileTypes: true });

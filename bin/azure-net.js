@@ -8,7 +8,8 @@ import {
     initEdges,
     initTranslations,
     initSchema,
-    initLint
+    initLint,
+    initPresenter
 } from '../src/commands/init/index.js';
 import {
     generateDatasource,
@@ -68,6 +69,11 @@ program
     .action(initSchema);
 
 program
+    .command('init:presenter')
+    .description('Initialize presenter factory')
+    .action(initPresenter);
+
+program
     .command('init')
     .description('Run all initialization steps')
     .action(async () => {
@@ -119,10 +125,5 @@ program
     .command('make:crud-presenter')
     .description('Generate CRUD presenter for existing service')
     .action(generateCrudPresenter);
-
-program
-    .command('make:service-by-repo')
-    .description('Generate service from existing repository')
-    .action(generateServiceByRepo);
 
 program.parse();

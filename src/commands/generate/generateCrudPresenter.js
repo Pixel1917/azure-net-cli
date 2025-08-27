@@ -1,11 +1,10 @@
 import prompts from 'prompts';
 import path from 'path';
-import fs from 'fs/promises';
 import { selectContext, getContextPath, toPascalCase, getAvailableFiles, getApplicationProviderServices } from '../../utils/contextUtils.js';
-import {updateIndexTs, writeIfNotExists} from '../../utils/fileUtils.js';
+import { updateIndexTs, writeIfNotExists, updateCoreIndex } from '../../utils/fileUtils.js';
 
 const createSchemaTemplate = `import { {{schemaFactory}} } from '{{schemaImport}}';
-import type { I{{name}}CreateRequest } from '\${{context}}/Domain/Ports/{{entity}}';
+import type { I{{name}}CreateRequest } from '\${{context}}/Domain/{{entity}}';
 
 export const Create{{name}}Schema = {{schemaFactory}}<I{{name}}CreateRequest>()
 \t.rules((rules) => ({
@@ -14,7 +13,7 @@ export const Create{{name}}Schema = {{schemaFactory}}<I{{name}}CreateRequest>()
 \t.create();`;
 
 const updateSchemaTemplate = `import { {{schemaFactory}} } from '{{schemaImport}}';
-import type { I{{name}}UpdateRequest } from '\${{context}}/Domain/Ports/{{entity}}';
+import type { I{{name}}UpdateRequest } from '\${{context}}/Domain/{{entity}}';
 
 export const Update{{name}}Schema = {{schemaFactory}}<I{{name}}UpdateRequest>()
 \t.rules((rules) => ({
@@ -22,14 +21,14 @@ export const Update{{name}}Schema = {{schemaFactory}}<I{{name}}UpdateRequest>()
 \t}))
 \t.create();`;
 
-const presenterWithSharedTemplate = `import { {{presenterFactory}} } from '$shared/Presenter';
+const presenterWithCoreTemplate = `import { {{presenterFactory}} } from '$core/Presenter';
 import { ApplicationProvider } from '\${{context}}/Application';
 import { Create{{name}}Schema, Update{{name}}Schema } from './Schema';
 import type { 
 \tI{{name}}CollectionQuery,
 \tI{{name}}CreateRequest,
 \tI{{name}}UpdateRequest
-} from '\${{context}}/Domain/Ports/{{name}}';
+} from '\${{context}}/Domain/{{name}}';
 
 export const {{name}}Presenter = {{presenterFactory}}('{{name}}Presenter', ({ createAsyncResource, createAsyncAction }) => {
 \tconst { {{serviceName}} } = ApplicationProvider();
@@ -52,14 +51,14 @@ export const {{name}}Presenter = {{presenterFactory}}('{{name}}Presenter', ({ cr
 \treturn { collection, resource, create, update, remove };
 });`;
 
-const presenterWithoutSharedTemplate = `import { createPresenter } from '@azure-net/kit';
+const presenterWithoutCoreTemplate = `import { createPresenter } from '@azure-net/kit';
 import { ApplicationProvider } from '\${{context}}/Application';
 import { Create{{name}}Schema, Update{{name}}Schema } from './Schema';
 import type { 
 \tI{{name}}CollectionQuery,
 \tI{{name}}CreateRequest,
 \tI{{name}}UpdateRequest
-} from '\${{context}}/Domain/Ports/{{name}}';
+} from '\${{context}}/Domain/{{name}}';
 
 export const {{name}}Presenter = createPresenter('{{name}}Presenter', () => {
 \tconst { {{serviceName}} } = ApplicationProvider();
@@ -74,7 +73,7 @@ export const {{name}}Presenter = createPresenter('{{name}}Presenter', () => {
 \t\tawait {{serviceName}}.create(Create{{name}}Schema.from(request).json());
 \t
 \tconst update = async (id: number, request: I{{name}}UpdateRequest) =>
-\t\tawait {{serviceName}}.update(id, Update{{name}}Schema.from(request).json());
+\t\tawait {{serviceName}}.update(id, Update{{name}}Schema.from(request).json()));
 \t
 \tconst remove = async (id: number) => 
 \t\tawait {{serviceName}}.remove(id);
@@ -105,8 +104,8 @@ export default async function generateCrudPresenter() {
     const pascalName = toPascalCase(entityName);
 
     // Get schema factory
-    const sharedSchemas = await getAvailableFiles(
-        path.join(process.cwd(), 'src/app/shared/Schema')
+    const coreSchemas = await getAvailableFiles(
+        path.join(process.cwd(), 'src/app/core/Schema')
     );
 
     const { schemaType } = await prompts({
@@ -115,13 +114,13 @@ export default async function generateCrudPresenter() {
         message: 'Select schema factory:',
         choices: [
             { title: 'Use createSchemaFactory from package', value: 'package' },
-            ...sharedSchemas.map(s => ({ title: `Use ${s} from shared`, value: s }))
+            ...coreSchemas.map(s => ({ title: `Use ${s} from core`, value: s }))
         ]
     });
 
     // Get presenter factory
-    const sharedPresenters = await getAvailableFiles(
-        path.join(process.cwd(), 'src/app/shared/Presenter')
+    const corePresenters = await getAvailableFiles(
+        path.join(process.cwd(), 'src/app/core/Presenter')
     );
 
     const { presenterType } = await prompts({
@@ -130,7 +129,7 @@ export default async function generateCrudPresenter() {
         message: 'Select presenter factory:',
         choices: [
             { title: 'Use createPresenter from package', value: 'package' },
-            ...sharedPresenters.map(p => ({ title: `Use ${p} from shared`, value: p }))
+            ...corePresenters.map(p => ({ title: `Use ${p} from core`, value: p }))
         ]
     });
 
@@ -144,7 +143,7 @@ export default async function generateCrudPresenter() {
     const schemaFactory = schemaType === 'package' ? 'Schema' : schemaType;
     const schemaImport = schemaType === 'package'
         ? '@azure-net/kit'
-        : '$shared/Schema';
+        : '$core/Schema';
 
     if (schemaType === 'package') {
         const schemaImportFull = `import { createSchemaFactory } from '@azure-net/kit';
@@ -196,8 +195,8 @@ const Schema = createSchemaFactory(createRules(validationMessagesI18n));`;
 
     // Create Presenter
     const presenterTemplate = presenterType === 'package'
-        ? presenterWithoutSharedTemplate
-        : presenterWithSharedTemplate;
+        ? presenterWithoutCoreTemplate
+        : presenterWithCoreTemplate;
 
     const presenterFactory = presenterType === 'package' ? 'createPresenter' : presenterType;
 
@@ -215,6 +214,9 @@ const Schema = createSchemaFactory(createRules(validationMessagesI18n));`;
         path.join(deliveryModulePath, 'index.ts'),
         `export * from './${pascalName}Presenter';\nexport * from './Schema';`
     );
+
+    // Update core index
+    await updateCoreIndex();
 
     console.log(`✅ CRUD presenter for ${pascalName} created successfully!`);
 }
