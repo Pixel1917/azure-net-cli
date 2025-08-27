@@ -28,11 +28,11 @@ export default async function generateDatasource() {
 
     // Get available responses
     const coreResponses = await getAvailableFiles(
-        path.join(process.cwd(), 'src/app/core/Response')
+        path.join(process.cwd(), 'src/app/core/responses')
     );
 
     const contextResponses = context !== 'core'
-        ? await getAvailableFiles(path.join(contextPath, 'Infrastructure/Response'))
+        ? await getAvailableFiles(path.join(contextPath, 'infrastructure/responses'))
         : [];
 
     const allResponses = [
@@ -59,12 +59,12 @@ export default async function generateDatasource() {
     });
 
     const datasourcePath = context === 'core'
-        ? path.join(contextPath, 'Datasource')
-        : path.join(contextPath, 'Infrastructure/Http/Datasource');
+        ? path.join(contextPath, 'datasources')
+        : path.join(contextPath, 'infrastructure/http/datasources');
 
     const responseImport = response.from === 'core'
-        ? context === 'core' ? '../Response' : '$core/Response'
-        : `\$${context}/Infrastructure/Response`;
+        ? context === 'core' ? '../responses' : '$core/responses'
+        : `\$${context}/infrastructure/responses`;
 
     const content = datasourceWithResponseTemplate
         .replace(/{{name}}/g, pascalName)

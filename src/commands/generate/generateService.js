@@ -4,7 +4,7 @@ import { selectContext, getContextPath, toPascalCase, getAvailableFiles } from '
 import { writeIfNotExists, updateIndexTs } from '../../utils/fileUtils.js';
 
 const serviceTemplate = `import { ClassMirror } from '@azure-net/kit';
-import { {{repository}} } from '\${{context}}/Infrastructure/Http/Repositories';
+import { {{repository}} } from '\${{context}}/infrastructure/http/repositories';
 
 export class {{name}}Service extends ClassMirror<{{repository}}> {
 \tconstructor(private {{repositoryVar}}: {{repository}}) {
@@ -35,7 +35,7 @@ export default async function generateService() {
     // Get available repositories
     const contextPath = getContextPath(context);
     const repositories = await getAvailableFiles(
-        path.join(contextPath, 'Infrastructure', 'Http', 'Repositories')
+        path.join(contextPath, 'infrastructure', 'http', 'repositories')
     );
 
     const choices = [
@@ -51,7 +51,7 @@ export default async function generateService() {
     });
 
     const pascalName = toPascalCase(name);
-    const servicePath = path.join(contextPath, 'Application', 'Services');
+    const servicePath = path.join(contextPath, 'application', 'services');
     const filePath = path.join(servicePath, `${pascalName}Service.ts`);
 
     // Generate service

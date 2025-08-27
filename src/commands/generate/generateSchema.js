@@ -4,8 +4,8 @@ import fs from 'fs/promises';
 import { selectContext, getContextPath, toPascalCase, getAvailableFiles } from '../../utils/contextUtils.js';
 import { writeIfNotExists, updateIndexTs } from '../../utils/fileUtils.js';
 
-const schemaWithCoreTemplate = `import { {{coreSchema}} } from '\$core/Schema';
-import type { I{{name}}Request } from '\${{context}}/Domain/{{entity}}';
+const schemaWithCoreTemplate = `import { {{coreSchema}} } from '\$core/schemas';
+import type { I{{name}}Request } from '\${{context}}/domain/{{entityLower}}';
 
 export const {{name}}Schema = {{coreSchema}}<I{{name}}Request>()
 \t.rules((rules) => ({
@@ -15,7 +15,7 @@ export const {{name}}Schema = {{coreSchema}}<I{{name}}Request>()
 
 const schemaWithPackageTemplate = `import { createSchemaFactory } from '@azure-net/kit';
 import { createRules, validationMessagesI18n } from '@azure-net/kit/schema';
-import type { I{{name}}Request } from '\${{context}}/Domain/{{entity}}';
+import type { I{{name}}Request } from '\${{context}}/domain/{{entityLower}}';
 
 const Schema = createSchemaFactory(createRules(validationMessagesI18n));
 
@@ -36,7 +36,7 @@ export default async function generateSchema() {
     const { module } = await prompts({
         type: 'text',
         name: 'module',
-        message: 'Module name (folder in Delivery):'
+        message: 'Module name (folder in delivery):'
     });
 
     const { name } = await prompts({
@@ -47,7 +47,7 @@ export default async function generateSchema() {
 
     // Check for core schemas
     const coreSchemas = await getAvailableFiles(
-        path.join(process.cwd(), 'src/app/core/Schema')
+        path.join(process.cwd(), 'src/app/core/schemas')
     );
 
     const choices = [
@@ -64,30 +64,32 @@ export default async function generateSchema() {
 
     const pascalName = toPascalCase(name);
     const moduleName = toPascalCase(module);
+    const moduleLower = moduleName.toLowerCase();
+    const entityLower = moduleName.toLowerCase();
     const contextPath = getContextPath(context);
-    const schemaPath = path.join(contextPath, 'Delivery', moduleName, 'Schema');
+    const schemaPath = path.join(contextPath, 'delivery', moduleLower, 'schema');
     const filePath = path.join(schemaPath, `${pascalName}Schema.ts`);
 
     const content = schemaType === 'package'
         ? schemaWithPackageTemplate
             .replace(/{{name}}/g, pascalName)
             .replace(/{{context}}/g, context)
-            .replace(/{{entity}}/g, moduleName)
+            .replace(/{{entityLower}}/g, entityLower)
         : schemaWithCoreTemplate
             .replace(/{{name}}/g, pascalName)
             .replace(/{{context}}/g, context)
-            .replace(/{{entity}}/g, moduleName)
+            .replace(/{{entityLower}}/g, entityLower)
             .replace(/{{coreSchema}}/g, schemaType);
 
     await writeIfNotExists(filePath, content);
     await updateIndexTs(schemaPath);
 
     // Update module index
-    const moduleIndexPath = path.join(contextPath, 'Delivery', moduleName, 'index.ts');
+    const moduleIndexPath = path.join(contextPath, 'delivery', moduleLower, 'index.ts');
     if (await fs.access(moduleIndexPath).then(() => true).catch(() => false)) {
         let indexContent = await fs.readFile(moduleIndexPath, 'utf-8');
-        if (!indexContent.includes(`export * from './Schema'`)) {
-            indexContent += `\nexport * from './Schema';`;
+        if (!indexContent.includes(`export * from './schema'`)) {
+            indexContent += `\nexport * from './schema';`;
             await fs.writeFile(moduleIndexPath, indexContent, 'utf-8');
         }
     }

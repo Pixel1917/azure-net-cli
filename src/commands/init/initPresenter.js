@@ -1,7 +1,7 @@
 import {updateCoreIndex, writeIfNotExists} from '../../utils/fileUtils.js';
 import path from 'path';
 
-const presenterPath = path.join(process.cwd(), 'src/app/core/Presenter/AppPresenter.ts');
+const presenterPath = path.join(process.cwd(), 'src/app/core/presenters/AppPresenter.ts');
 
 const presenterTemplate = `import { createPresenterFactory } from '@azure-net/kit/edges';
 import { createAsyncHelpers, createErrorParser } from '@azure-net/kit';
@@ -14,7 +14,7 @@ export const AppPresenter = createPresenterFactory({ ...AsyncHelpers, handleErro
 export default async function initPresenter() {
     await writeIfNotExists(presenterPath, presenterTemplate);
     await writeIfNotExists(
-        path.join(process.cwd(), 'src/app/core/Presenter/index.ts'),
+        path.join(process.cwd(), 'src/app/core/presenters/index.ts'),
         `export * from './AppPresenter';`
     );
 

@@ -42,7 +42,7 @@ export async function getAvailableFiles(dir, pattern = '.ts') {
 
 export async function getApplicationProviderServices(context) {
     const contextPath = getContextPath(context);
-    const providerPath = path.join(contextPath, 'Application/Providers/ApplicationProvider.ts');
+    const providerPath = path.join(contextPath, 'application/providers/ApplicationProvider.ts');
 
     try {
         const content = await fs.readFile(providerPath, 'utf-8');
@@ -71,4 +71,11 @@ export function toPascalCase(str) {
 export function toCamelCase(str) {
     const pascal = toPascalCase(str);
     return pascal.charAt(0).toLowerCase() + pascal.slice(1);
+}
+
+export function toKebabCase(str) {
+    return str
+        .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+        .replace(/([A-Z])([A-Z][a-z])/g, '$1-$2')
+        .toLowerCase();
 }

@@ -1,9 +1,9 @@
 import { writeIfNotExists, updateCoreIndex } from '../../utils/fileUtils.js';
 import path from 'path';
 
-const translationsPath = path.join(process.cwd(), 'src/app/core/Translation');
+const translationsPath = path.join(process.cwd(), 'src/app/core/translations');
 
-const translationProviderTemplate = `import { messages } from './Locales';
+const translationProviderTemplate = `import { messages } from './locales';
 import { createTranslations } from '@azure-net/kit/i18n';
 
 export const Translation = createTranslations({ 
@@ -38,17 +38,17 @@ export default async function initTranslations() {
     );
 
     await writeIfNotExists(
-        path.join(translationsPath, 'Locales', 'en.ts'),
+        path.join(translationsPath, 'locales', 'en.ts'),
         enLocaleTemplate
     );
 
     await writeIfNotExists(
-        path.join(translationsPath, 'Locales', 'ru.ts'),
+        path.join(translationsPath, 'locales', 'ru.ts'),
         ruLocaleTemplate
     );
 
     await writeIfNotExists(
-        path.join(translationsPath, 'Locales', 'index.ts'),
+        path.join(translationsPath, 'locales', 'index.ts'),
         localesIndexTemplate
     );
 

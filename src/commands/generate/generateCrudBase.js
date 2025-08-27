@@ -1,6 +1,13 @@
 import prompts from 'prompts';
 import path from 'path';
-import { selectContext, getContextPath, toPascalCase, toCamelCase, getAvailableFiles } from '../../utils/contextUtils.js';
+import {
+    selectContext,
+    getContextPath,
+    toPascalCase,
+    toCamelCase,
+    getAvailableFiles,
+    toKebabCase
+} from '../../utils/contextUtils.js';
 import { writeIfNotExists, updateIndexTs, updateCoreIndex } from '../../utils/fileUtils.js';
 
 // Templates for CRUD base generation
@@ -11,7 +18,7 @@ const entityTemplate = `export interface I{{name}} {
 \tupdated_at: string;
 }`;
 
-const portsIndexTemplate = `import type { I{{name}} } from '\${{context}}/Domain/{{name}}/Model';
+const portsIndexTemplate = `import type { I{{name}} } from '\${{context}}/domain/{{entityLower}}/model';
 
 export interface I{{name}}Collection {
 \tdata: I{{name}}[];
@@ -41,7 +48,7 @@ import type {
 \tI{{name}}CollectionQuery,
 \tI{{name}}CreateRequest,
 \tI{{name}}UpdateRequest
-} from '\${{context}}/Domain/{{name}}';
+} from '\${{context}}/domain/{{entityLower}}';
 
 export class {{name}}Repository {
 \tprivate endpoint = '{{endpoint}}';
@@ -80,7 +87,7 @@ export class {{name}}Repository {
 }`;
 
 const serviceTemplate = `import { ClassMirror } from '@azure-net/kit';
-import { {{name}}Repository } from '\${{context}}/Infrastructure/Http/Repositories';
+import { {{name}}Repository } from '\${{context}}/infrastructure/http/repositories';
 
 export class {{name}}Service extends ClassMirror<{{name}}Repository> {
 \tconstructor(private {{camelName}}Repository: {{name}}Repository) {
@@ -112,10 +119,10 @@ export default async function generateCrudBase() {
     // Get available datasources
     const contextPath = getContextPath(context);
     const coreDatasources = await getAvailableFiles(
-        path.join(process.cwd(), 'src/app/core/Datasource')
+        path.join(process.cwd(), 'src/app/core/datasources')
     );
     const contextDatasources = await getAvailableFiles(
-        path.join(contextPath, 'Infrastructure/Http/Datasource')
+        path.join(contextPath, 'infrastructure/http/datasources')
     );
 
     const allDatasources = [
@@ -132,13 +139,14 @@ export default async function generateCrudBase() {
 
     const pascalName = toPascalCase(name);
     const camelName = toCamelCase(name);
+    const entityLower = toKebabCase(pascalName);
 
     console.log('\n🚀 Generating CRUD base (repository & service)...\n');
 
     // 1. Create Domain structure
-    const domainPath = path.join(contextPath, 'Domain', pascalName);
-    const modelPath = path.join(domainPath, 'Model');
-    const portsPath = path.join(domainPath, 'Ports');
+    const domainPath = path.join(contextPath, 'domain', entityLower);
+    const modelPath = path.join(domainPath, 'model');
+    const portsPath = path.join(domainPath, 'ports');
 
     // Create Model
     await writeIfNotExists(
@@ -152,19 +160,20 @@ export default async function generateCrudBase() {
         portsIndexTemplate
             .replace(/{{name}}/g, pascalName)
             .replace(/{{context}}/g, context)
+            .replace(/{{entityLower}}/g, entityLower)
     );
 
     // Create Domain module index
     await writeIfNotExists(
         path.join(domainPath, 'index.ts'),
-        `export * from './Model';\nexport * from './Ports';`
+        `export * from './model';\nexport * from './ports';`
     );
 
     // 2. Create Repository
-    const repoPath = path.join(contextPath, 'Infrastructure/Http/Repositories');
+    const repoPath = path.join(contextPath, 'infrastructure/http/repositories');
     const datasourceImport = datasource.from === 'core'
-        ? '$core/Datasource'
-        : `\$${context}/Infrastructure/Http/Datasource`;
+        ? '$core/datasources'
+        : `\$${context}/infrastructure/http/datasources`;
 
     await writeIfNotExists(
         path.join(repoPath, `${pascalName}Repository.ts`),
@@ -175,11 +184,12 @@ export default async function generateCrudBase() {
             .replace(/{{datasource}}/g, datasource.name)
             .replace(/{{datasourceImport}}/g, datasourceImport)
             .replace(/{{datasourceVar}}/g, toCamelCase(datasource.name))
+            .replace(/{{entityLower}}/g, entityLower)
     );
     await updateIndexTs(repoPath);
 
     // 3. Create Service
-    const servicePath = path.join(contextPath, 'Application/Services');
+    const servicePath = path.join(contextPath, 'application/services');
     await writeIfNotExists(
         path.join(servicePath, `${pascalName}Service.ts`),
         serviceTemplate

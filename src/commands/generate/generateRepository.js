@@ -27,10 +27,10 @@ export default async function generateRepository() {
     // Get available datasources
     const contextPath = getContextPath(context);
     const coreDatasources = await getAvailableFiles(
-        path.join(process.cwd(), 'src/app/core/Datasource')
+        path.join(process.cwd(), 'src/app/core/datasources')
     );
     const contextDatasources = await getAvailableFiles(
-        path.join(contextPath, 'Infrastructure/Http/Datasource')
+        path.join(contextPath, 'infrastructure/http/datasources')
     );
 
     const allDatasources = [
@@ -51,13 +51,13 @@ export default async function generateRepository() {
     });
 
     const pascalName = toPascalCase(name);
-    const repoPath = path.join(contextPath, 'Infrastructure/Http/Repositories');
+    const repoPath = path.join(contextPath, 'infrastructure/http/repositories');
     const filePath = path.join(repoPath, `${pascalName}Repository.ts`);
 
     // Generate repository
     const datasourceImport = datasource.from === 'core'
-        ? '$core/Datasource'
-        : `\$${context}/Infrastructure/Http/Datasource`;
+        ? '$core/datasources'
+        : `\${context}/infrastructure/http/datasources`;
 
     const content = repositoryTemplate
         .replace(/{{name}}/g, pascalName)

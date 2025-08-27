@@ -1,10 +1,17 @@
 import prompts from 'prompts';
 import path from 'path';
-import { selectContext, getContextPath, toPascalCase, getAvailableFiles, getApplicationProviderServices } from '../../utils/contextUtils.js';
+import {
+    selectContext,
+    getContextPath,
+    toPascalCase,
+    getAvailableFiles,
+    getApplicationProviderServices,
+    toKebabCase
+} from '../../utils/contextUtils.js';
 import { updateIndexTs, writeIfNotExists, updateCoreIndex } from '../../utils/fileUtils.js';
 
 const createSchemaTemplate = `import { {{schemaFactory}} } from '{{schemaImport}}';
-import type { I{{name}}CreateRequest } from '\${{context}}/Domain/{{entity}}';
+import type { I{{name}}CreateRequest } from '\${{context}}/domain/{{entityLower}}';
 
 export const Create{{name}}Schema = {{schemaFactory}}<I{{name}}CreateRequest>()
 \t.rules((rules) => ({
@@ -13,7 +20,7 @@ export const Create{{name}}Schema = {{schemaFactory}}<I{{name}}CreateRequest>()
 \t.create();`;
 
 const updateSchemaTemplate = `import { {{schemaFactory}} } from '{{schemaImport}}';
-import type { I{{name}}UpdateRequest } from '\${{context}}/Domain/{{entity}}';
+import type { I{{name}}UpdateRequest } from '\${{context}}/domain/{{entityLower}}';
 
 export const Update{{name}}Schema = {{schemaFactory}}<I{{name}}UpdateRequest>()
 \t.rules((rules) => ({
@@ -21,14 +28,14 @@ export const Update{{name}}Schema = {{schemaFactory}}<I{{name}}UpdateRequest>()
 \t}))
 \t.create();`;
 
-const presenterWithCoreTemplate = `import { {{presenterFactory}} } from '$core/Presenter';
-import { ApplicationProvider } from '\${{context}}/Application';
-import { Create{{name}}Schema, Update{{name}}Schema } from './Schema';
+const presenterWithCoreTemplate = `import { {{presenterFactory}} } from '$core/presenters';
+import { ApplicationProvider } from '\${{context}}/application';
+import { Create{{name}}Schema, Update{{name}}Schema } from './schema';
 import type { 
 \tI{{name}}CollectionQuery,
 \tI{{name}}CreateRequest,
 \tI{{name}}UpdateRequest
-} from '\${{context}}/Domain/{{name}}';
+} from '\${{context}}/domain/{{entityLower}}';
 
 export const {{name}}Presenter = {{presenterFactory}}('{{name}}Presenter', ({ createAsyncResource, createAsyncAction }) => {
 \tconst { {{serviceName}} } = ApplicationProvider();
@@ -52,13 +59,13 @@ export const {{name}}Presenter = {{presenterFactory}}('{{name}}Presenter', ({ cr
 });`;
 
 const presenterWithoutCoreTemplate = `import { createPresenter } from '@azure-net/kit';
-import { ApplicationProvider } from '\${{context}}/Application';
-import { Create{{name}}Schema, Update{{name}}Schema } from './Schema';
+import { ApplicationProvider } from '\${{context}}/application';
+import { Create{{name}}Schema, Update{{name}}Schema } from './schema';
 import type { 
 \tI{{name}}CollectionQuery,
 \tI{{name}}CreateRequest,
 \tI{{name}}UpdateRequest
-} from '\${{context}}/Domain/{{name}}';
+} from '\${{context}}/domain/{{entityLower}}';
 
 export const {{name}}Presenter = createPresenter('{{name}}Presenter', () => {
 \tconst { {{serviceName}} } = ApplicationProvider();
@@ -102,10 +109,11 @@ export default async function generateCrudPresenter() {
     // Extract entity name from service name
     const entityName = service.replace('Service', '');
     const pascalName = toPascalCase(entityName);
+    const entityLower = toKebabCase(pascalName);
 
     // Get schema factory
     const coreSchemas = await getAvailableFiles(
-        path.join(process.cwd(), 'src/app/core/Schema')
+        path.join(process.cwd(), 'src/app/core/schemas')
     );
 
     const { schemaType } = await prompts({
@@ -120,7 +128,7 @@ export default async function generateCrudPresenter() {
 
     // Get presenter factory
     const corePresenters = await getAvailableFiles(
-        path.join(process.cwd(), 'src/app/core/Presenter')
+        path.join(process.cwd(), 'src/app/core/presenters')
     );
 
     const { presenterType } = await prompts({
@@ -134,8 +142,8 @@ export default async function generateCrudPresenter() {
     });
 
     const contextPath = getContextPath(context);
-    const deliveryModulePath = path.join(contextPath, 'Delivery', pascalName);
-    const schemaPath = path.join(deliveryModulePath, 'Schema');
+    const deliveryModulePath = path.join(contextPath, 'delivery', entityLower);
+    const schemaPath = path.join(deliveryModulePath, 'schema');
 
     console.log('\n🚀 Generating CRUD presenter...\n');
 
@@ -143,7 +151,7 @@ export default async function generateCrudPresenter() {
     const schemaFactory = schemaType === 'package' ? 'Schema' : schemaType;
     const schemaImport = schemaType === 'package'
         ? '@azure-net/kit'
-        : '$core/Schema';
+        : '$core/schemas';
 
     if (schemaType === 'package') {
         const schemaImportFull = `import { createSchemaFactory } from '@azure-net/kit';
@@ -157,7 +165,7 @@ const Schema = createSchemaFactory(createRules(validationMessagesI18n));`;
                 .replace('import { {{schemaFactory}} } from \'{{schemaImport}}\';\n', '')
                 .replace(/{{name}}/g, pascalName)
                 .replace(/{{context}}/g, context)
-                .replace(/{{entity}}/g, pascalName)
+                .replace(/{{entityLower}}/g, entityLower)
                 .replace(/{{schemaFactory}}/g, 'Schema')
         );
 
@@ -167,7 +175,7 @@ const Schema = createSchemaFactory(createRules(validationMessagesI18n));`;
                 .replace('import { {{schemaFactory}} } from \'{{schemaImport}}\';\n', '')
                 .replace(/{{name}}/g, pascalName)
                 .replace(/{{context}}/g, context)
-                .replace(/{{entity}}/g, pascalName)
+                .replace(/{{entityLower}}/g, entityLower)
                 .replace(/{{schemaFactory}}/g, 'Schema')
         );
     } else {
@@ -176,7 +184,7 @@ const Schema = createSchemaFactory(createRules(validationMessagesI18n));`;
             createSchemaTemplate
                 .replace(/{{name}}/g, pascalName)
                 .replace(/{{context}}/g, context)
-                .replace(/{{entity}}/g, pascalName)
+                .replace(/{{entityLower}}/g, entityLower)
                 .replace(/{{schemaFactory}}/g, schemaFactory)
                 .replace(/{{schemaImport}}/g, schemaImport)
         );
@@ -186,7 +194,7 @@ const Schema = createSchemaFactory(createRules(validationMessagesI18n));`;
             updateSchemaTemplate
                 .replace(/{{name}}/g, pascalName)
                 .replace(/{{context}}/g, context)
-                .replace(/{{entity}}/g, pascalName)
+                .replace(/{{entityLower}}/g, entityLower)
                 .replace(/{{schemaFactory}}/g, schemaFactory)
                 .replace(/{{schemaImport}}/g, schemaImport)
         );
@@ -207,12 +215,13 @@ const Schema = createSchemaFactory(createRules(validationMessagesI18n));`;
             .replace(/{{context}}/g, context)
             .replace(/{{serviceName}}/g, service)
             .replace(/{{presenterFactory}}/g, presenterFactory)
+            .replace(/{{entityLower}}/g, entityLower)
     );
 
     // Create module index
     await writeIfNotExists(
         path.join(deliveryModulePath, 'index.ts'),
-        `export * from './${pascalName}Presenter';\nexport * from './Schema';`
+        `export * from './${pascalName}Presenter';\nexport * from './schema';`
     );
 
     // Update core index

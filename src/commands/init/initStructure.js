@@ -27,14 +27,14 @@ async function createIndexFile(dirPath, exportPatterns = []) {
 
 async function createBaseStructure(root, contextName, contextAlias) {
     // Domain - новая структура
-    const domainPath = path.join(root, 'Domain');
+    const domainPath = path.join(root, 'domain');
     await createDirIfNotExists(domainPath);
 
     // Infrastructure
-    const infraPath = path.join(root, 'Infrastructure');
-    await createDirIfNotExists(path.join(infraPath, 'Http', 'Repositories'));
-    await createDirIfNotExists(path.join(infraPath, 'Http', 'Datasource'));
-    await createDirIfNotExists(path.join(infraPath, 'Providers'));
+    const infraPath = path.join(root, 'infrastructure');
+    await createDirIfNotExists(path.join(infraPath, 'http', 'repositories'));
+    await createDirIfNotExists(path.join(infraPath, 'http', 'datasources'));
+    await createDirIfNotExists(path.join(infraPath, 'providers'));
 
     // Create empty InfrastructureProvider
     const infraProviderContent = `import { createBoundaryProvider } from '@azure-net/kit';
@@ -47,13 +47,13 @@ export const InfrastructureProvider = createBoundaryProvider(
 );`;
 
     await fs.writeFile(
-        path.join(infraPath, 'Providers', 'InfrastructureProvider.ts'),
+        path.join(infraPath, 'providers', 'InfrastructureProvider.ts'),
         infraProviderContent,
         'utf-8'
     );
 
     await fs.writeFile(
-        path.join(infraPath, 'Providers', 'index.ts'),
+        path.join(infraPath, 'providers', 'index.ts'),
         `export * from './InfrastructureProvider';`,
         'utf-8'
     );
@@ -61,18 +61,18 @@ export const InfrastructureProvider = createBoundaryProvider(
     // Create Infrastructure index
     await fs.writeFile(
         path.join(infraPath, 'index.ts'),
-        `export * from './Providers';`,
+        `export * from './providers';`,
         'utf-8'
     );
 
     // Application
-    const appPath = path.join(root, 'Application');
-    await createDirIfNotExists(path.join(appPath, 'Services'));
-    await createDirIfNotExists(path.join(appPath, 'Providers'));
+    const appPath = path.join(root, 'application');
+    await createDirIfNotExists(path.join(appPath, 'services'));
+    await createDirIfNotExists(path.join(appPath, 'providers'));
 
     // Create empty ApplicationProvider with correct import
     const appProviderContent = `import { createBoundaryProvider } from '@azure-net/kit';
-import { InfrastructureProvider } from '\$${contextAlias}/Infrastructure';
+import { InfrastructureProvider } from '\$${contextAlias}/infrastructure';
 
 export const ApplicationProvider = createBoundaryProvider(
 \t'${contextName}ApplicationProvider',
@@ -83,13 +83,13 @@ export const ApplicationProvider = createBoundaryProvider(
 );`;
 
     await fs.writeFile(
-        path.join(appPath, 'Providers', 'ApplicationProvider.ts'),
+        path.join(appPath, 'providers', 'ApplicationProvider.ts'),
         appProviderContent,
         'utf-8'
     );
 
     await fs.writeFile(
-        path.join(appPath, 'Providers', 'index.ts'),
+        path.join(appPath, 'providers', 'index.ts'),
         `export * from './ApplicationProvider';`,
         'utf-8'
     );
@@ -97,12 +97,12 @@ export const ApplicationProvider = createBoundaryProvider(
     // Create Application index
     await fs.writeFile(
         path.join(appPath, 'index.ts'),
-        `export * from './Providers';`,
+        `export * from './providers';`,
         'utf-8'
     );
 
     // Delivery - organized by modules
-    const deliveryPath = path.join(root, 'Delivery');
+    const deliveryPath = path.join(root, 'delivery');
     await createDirIfNotExists(deliveryPath);
 }
 
@@ -124,12 +124,12 @@ export default async function initStructure() {
 
     // Create core structure with all functionality
     await createDirIfNotExists(CORE_PATH);
-    await createDirIfNotExists(path.join(CORE_PATH, 'Datasource'));
-    await createDirIfNotExists(path.join(CORE_PATH, 'Response'));
-    await createDirIfNotExists(path.join(CORE_PATH, 'Schema'));
-    await createDirIfNotExists(path.join(CORE_PATH, 'Middleware'));
-    await createDirIfNotExists(path.join(CORE_PATH, 'Presenter'));
-    await createDirIfNotExists(path.join(CORE_PATH, 'Translation'));
+    await createDirIfNotExists(path.join(CORE_PATH, 'datasources'));
+    await createDirIfNotExists(path.join(CORE_PATH, 'responses'));
+    await createDirIfNotExists(path.join(CORE_PATH, 'schemas'));
+    await createDirIfNotExists(path.join(CORE_PATH, 'middleware'));
+    await createDirIfNotExists(path.join(CORE_PATH, 'presenters'));
+    await createDirIfNotExists(path.join(CORE_PATH, 'translations'));
 
     // Update core index
     await updateCoreIndex();

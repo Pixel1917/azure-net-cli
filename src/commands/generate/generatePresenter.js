@@ -3,8 +3,8 @@ import path from 'path';
 import { selectContext, getContextPath, toPascalCase, getAvailableFiles } from '../../utils/contextUtils.js';
 import { writeIfNotExists, updateCoreIndex } from '../../utils/fileUtils.js';
 
-const presenterWithCoreTemplate = `import { {{corePresenter}} } from '$core/Presenter';
-import { ApplicationProvider } from '\${{context}}/Application';
+const presenterWithCoreTemplate = `import { {{corePresenter}} } from '$core/presenters';
+import { ApplicationProvider } from '\${{context}}/application';
 
 export const {{name}}Presenter = {{corePresenter}}('{{name}}Presenter', ({ createAsyncResource, createAsyncAction }) => {
 \tconst { /* extract services from ApplicationProvider */ } = ApplicationProvider();
@@ -18,7 +18,7 @@ export const {{name}}Presenter = {{corePresenter}}('{{name}}Presenter', ({ creat
 });`;
 
 const presenterWithPackageTemplate = `import { createPresenter } from '@azure-net/kit';
-import { ApplicationProvider } from '\${{context}}/Application';
+import { ApplicationProvider } from '\${{context}}/application';
 
 export const {{name}}Presenter = createPresenter('{{name}}Presenter', () => {
 \tconst { /* extract services from ApplicationProvider */ } = ApplicationProvider();
@@ -37,12 +37,12 @@ export default async function generatePresenter() {
     const { name } = await prompts({
         type: 'text',
         name: 'name',
-        message: 'Module name (will create folder in Delivery):'
+        message: 'Module name (will create folder in delivery):'
     });
 
     // Check for core presenters
     const corePresenters = await getAvailableFiles(
-        path.join(process.cwd(), 'src/app/core/Presenter')
+        path.join(process.cwd(), 'src/app/core/presenters')
     );
 
     const presenterChoices = [
@@ -58,8 +58,9 @@ export default async function generatePresenter() {
     });
 
     const pascalName = toPascalCase(name);
+    const moduleLower = pascalName.toLowerCase();
     const contextPath = getContextPath(context);
-    const modulePath = path.join(contextPath, 'Delivery', pascalName);
+    const modulePath = path.join(contextPath, 'delivery', moduleLower);
     const filePath = path.join(modulePath, `${pascalName}Presenter.ts`);
 
     const content = presenterType === 'package'

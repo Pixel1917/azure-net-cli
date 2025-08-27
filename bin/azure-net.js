@@ -20,9 +20,7 @@ import {
     generatePresenter,
     generateModule,
     generateCrudBase,
-    generateCrudPresenter,
-    generatePresenterByService,
-    generateServiceByRepo
+    generateCrudPresenter
 } from '../src/commands/generate/index.js';
 
 const program = new Command();

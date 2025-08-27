@@ -23,8 +23,8 @@ export default async function generateResponse() {
         : getContextPath(context);
 
     const responsePath = context === 'core'
-        ? path.join(contextPath, 'Response')
-        : path.join(contextPath, 'Infrastructure/Response');
+        ? path.join(contextPath, 'responses')
+        : path.join(contextPath, 'infrastructure/responses');
 
     const content = responseTemplate.replace(/{{name}}/g, pascalName);
     const filePath = path.join(responsePath, `${pascalName}Response.ts`);
