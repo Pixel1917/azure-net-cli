@@ -5,9 +5,8 @@ import { selectContext, getContextPath, toPascalCase, getAvailableFiles } from '
 import { writeIfNotExists, updateIndexTs } from '../../utils/fileUtils.js';
 
 const schemaWithCoreTemplate = `import { {{coreSchema}} } from '\$core/schemas';
-import type { I{{name}}Request } from '\${{context}}/domain/{{entityLower}}';
 
-export const {{name}}Schema = {{coreSchema}}<I{{name}}Request>()
+export const {{name}}Schema = {{coreSchema}}()
 \t.rules((rules) => ({
 \t\t// Add validation rules here
 \t}))
@@ -15,11 +14,10 @@ export const {{name}}Schema = {{coreSchema}}<I{{name}}Request>()
 
 const schemaWithPackageTemplate = `import { createSchemaFactory } from '@azure-net/kit';
 import { createRules, validationMessagesI18n } from '@azure-net/kit/schema';
-import type { I{{name}}Request } from '\${{context}}/domain/{{entityLower}}';
 
 const Schema = createSchemaFactory(createRules(validationMessagesI18n));
 
-export const {{name}}Schema = Schema<I{{name}}Request>()
+export const {{name}}Schema = Schema()
 \t.rules((rules) => ({
 \t\t// Add validation rules here
 \t}))

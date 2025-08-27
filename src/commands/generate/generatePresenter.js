@@ -1,6 +1,6 @@
 import prompts from 'prompts';
 import path from 'path';
-import { selectContext, getContextPath, toPascalCase, getAvailableFiles } from '../../utils/contextUtils.js';
+import {selectContext, getContextPath, toPascalCase, getAvailableFiles, toKebabCase} from '../../utils/contextUtils.js';
 import { writeIfNotExists, updateCoreIndex } from '../../utils/fileUtils.js';
 
 const presenterWithCoreTemplate = `import { {{corePresenter}} } from '$core/presenters';
@@ -58,7 +58,7 @@ export default async function generatePresenter() {
     });
 
     const pascalName = toPascalCase(name);
-    const moduleLower = pascalName.toLowerCase();
+    const moduleLower = toKebabCase(pascalName);
     const contextPath = getContextPath(context);
     const modulePath = path.join(contextPath, 'delivery', moduleLower);
     const filePath = path.join(modulePath, `${pascalName}Presenter.ts`);
