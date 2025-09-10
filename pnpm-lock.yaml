@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@azure-net/kit':
-        specifier: ^0.3.3
-        version: 0.3.3(@sveltejs/kit@2.36.2(@sveltejs/vite-plugin-svelte@6.1.3(svelte@5.38.3)(vite@7.1.3(@types/node@24.3.0)))(svelte@5.38.3)(vite@7.1.3(@types/node@24.3.0)))(svelte@5.38.3)
+        specifier: ^1.2.0
+        version: 1.2.0(@sveltejs/kit@2.36.2(@sveltejs/vite-plugin-svelte@6.1.3(svelte@5.38.3)(vite@7.1.3(@types/node@24.3.0)))(svelte@5.38.3)(vite@7.1.3(@types/node@24.3.0)))(svelte@5.38.3)
       commander:
         specifier: ^11
         version: 11.1.0
@@ -30,10 +30,11 @@ importers:
 
 packages:
 
-  '@azure-net/kit@0.3.3':
-    resolution: {integrity: sha512-gYM+A7P+zsnrRjO00mDtkQXy3PPGwe9Xp+o3IfT1l4GLEzqVxU68POmzqQWoafVO2TH3LoKcXjfx++TmTSgdfQ==}
+  '@azure-net/kit@1.2.0':
+    resolution: {integrity: sha512-raq32qhokZgbvm358v3r+oqM9r9/q9ETZzblr36M3zdt7xOOXMwf9WMuiv/RHNWm4xh3iG5hAOgKFwwS7GeLww==}
     peerDependencies:
-      svelte: ^5.0.0
+      '@sveltejs/kit': '>=2.16.0'
+      svelte: '>=5.0.0'
 
   '@esbuild/aix-ppc64@0.25.9':
     resolution: {integrity: sha512-OaGtL73Jck6pBKjNIe24BnFE6agGl+6KxDtTfHhy1HmhthfKouEcOhqpSL64K4/0WCtbKFLOdzD/44cJ4k9opA==}
@@ -371,8 +372,8 @@ packages:
     resolution: {integrity: sha512-qIj0G9wZbMGNLjLmg1PT6v2mE9AH2zlnADJD/2tC6E00hgmhUOfEB6greHPAfLRSufHqROIUTkw6E+M3lH0PTQ==}
     engines: {node: '>= 0.4'}
 
-  azure-net-tools@1.0.9:
-    resolution: {integrity: sha512-7qkzyU/R6+b366310uNAk3965oHU83C6uD+5+lEgHqK3gwwn9qMCOBCCxwplRD3wJv3bWiurs7lYmnKcffxURA==}
+  azure-net-tools@1.1.3:
+    resolution: {integrity: sha512-cdX3RmTflfoQIh47pFS3FYKuGe+G1LXnFcLWZh2wqxOWOzNIM+8k5zc3XV5QIIpTvuBbf3r+EdPXas7G/E/qqA==}
 
   balanced-match@1.0.2:
     resolution: {integrity: sha512-3oSeUO0TMV67hN1AmbXsK4yaqU7tjiHlbxRDZOpH0KW9+CeX4bRAaX0Anxt0tx2MrpRpWwQaPwIlISEJhYU5Pw==}
@@ -408,11 +409,11 @@ packages:
   devalue@5.1.1:
     resolution: {integrity: sha512-maua5KUiapvEwiEAe+XnlZ3Rh0GD+qI1J/nb9vrJc3muPXvcF/8gXYTWF76+5DAqHyDUtOIImEuo0YKE9mshVw==}
 
-  edges-svelte-translations@0.1.2:
-    resolution: {integrity: sha512-znuBWbrkZdKOOcntNv132UhJ6Gk+J5TAkChzvgE4QU9x5XSESOyECzRQLgH6BP+4VB2pOK0RPuHr/ywmJF3mvg==}
+  edges-svelte-translations@0.2.0:
+    resolution: {integrity: sha512-BL0CURTWJSzW2vJVvY6Jc009Jdq/Pk1WsjYx2nyi7yq3d08srU/ds/JlNakKdSnWizhhrsCK0/1RE7Lin8uPTw==}
     peerDependencies:
       '@sveltejs/kit': ^2.16.0
-      edges-svelte: '>=1.0.3'
+      edges-svelte: '>=1.1.0'
       svelte: ^5.0.0
 
   edges-svelte@1.1.0:
@@ -473,9 +474,6 @@ packages:
   ky@1.9.0:
     resolution: {integrity: sha512-NgBeR/cu7kuC4BAeF1rnXhfoI2uQ9RBe8zl5vo87ASsf1iIQoCeOxyt6Io6K4Ki++5ItCavXAtbEWWCGFciQ6g==}
     engines: {node: '>=18'}
-
-  libphonenumber-js@1.12.13:
-    resolution: {integrity: sha512-QZXnR/OGiDcBjF4hGk0wwVrPcZvbSSyzlvkjXv5LFfktj7O2VZDrt4Xs8SgR/vOFco+qk1i8J43ikMXZoTrtPw==}
 
   locate-character@3.0.0:
     resolution: {integrity: sha512-SW13ws7BjaeJ6p7Q6CO2nchbYEc3X3J6WrmTTDto7yMPqVSZTUyY5Tjbid+Ab8gLnATtygYtiDIJGQRRn2ZOiA==}
@@ -614,16 +612,14 @@ packages:
 
 snapshots:
 
-  '@azure-net/kit@0.3.3(@sveltejs/kit@2.36.2(@sveltejs/vite-plugin-svelte@6.1.3(svelte@5.38.3)(vite@7.1.3(@types/node@24.3.0)))(svelte@5.38.3)(vite@7.1.3(@types/node@24.3.0)))(svelte@5.38.3)':
+  '@azure-net/kit@1.2.0(@sveltejs/kit@2.36.2(@sveltejs/vite-plugin-svelte@6.1.3(svelte@5.38.3)(vite@7.1.3(@types/node@24.3.0)))(svelte@5.38.3)(vite@7.1.3(@types/node@24.3.0)))(svelte@5.38.3)':
     dependencies:
-      azure-net-tools: 1.0.9
+      '@sveltejs/kit': 2.36.2(@sveltejs/vite-plugin-svelte@6.1.3(svelte@5.38.3)(vite@7.1.3(@types/node@24.3.0)))(svelte@5.38.3)(vite@7.1.3(@types/node@24.3.0))
+      azure-net-tools: 1.1.3
       edges-svelte: 1.1.0(@sveltejs/kit@2.36.2(@sveltejs/vite-plugin-svelte@6.1.3(svelte@5.38.3)(vite@7.1.3(@types/node@24.3.0)))(svelte@5.38.3)(vite@7.1.3(@types/node@24.3.0)))(svelte@5.38.3)
-      edges-svelte-translations: 0.1.2(@sveltejs/kit@2.36.2(@sveltejs/vite-plugin-svelte@6.1.3(svelte@5.38.3)(vite@7.1.3(@types/node@24.3.0)))(svelte@5.38.3)(vite@7.1.3(@types/node@24.3.0)))(edges-svelte@1.1.0(@sveltejs/kit@2.36.2(@sveltejs/vite-plugin-svelte@6.1.3(svelte@5.38.3)(vite@7.1.3(@types/node@24.3.0)))(svelte@5.38.3)(vite@7.1.3(@types/node@24.3.0)))(svelte@5.38.3))(svelte@5.38.3)
+      edges-svelte-translations: 0.2.0(@sveltejs/kit@2.36.2(@sveltejs/vite-plugin-svelte@6.1.3(svelte@5.38.3)(vite@7.1.3(@types/node@24.3.0)))(svelte@5.38.3)(vite@7.1.3(@types/node@24.3.0)))(edges-svelte@1.1.0(@sveltejs/kit@2.36.2(@sveltejs/vite-plugin-svelte@6.1.3(svelte@5.38.3)(vite@7.1.3(@types/node@24.3.0)))(svelte@5.38.3)(vite@7.1.3(@types/node@24.3.0)))(svelte@5.38.3))(svelte@5.38.3)
       ky: 1.9.0
-      libphonenumber-js: 1.12.13
       svelte: 5.38.3
-    transitivePeerDependencies:
-      - '@sveltejs/kit'
 
   '@esbuild/aix-ppc64@0.25.9':
     optional: true
@@ -847,7 +843,7 @@ snapshots:
 
   axobject-query@4.1.0: {}
 
-  azure-net-tools@1.0.9: {}
+  azure-net-tools@1.1.3: {}
 
   balanced-match@1.0.2: {}
 
@@ -869,7 +865,7 @@ snapshots:
 
   devalue@5.1.1: {}
 
-  edges-svelte-translations@0.1.2(@sveltejs/kit@2.36.2(@sveltejs/vite-plugin-svelte@6.1.3(svelte@5.38.3)(vite@7.1.3(@types/node@24.3.0)))(svelte@5.38.3)(vite@7.1.3(@types/node@24.3.0)))(edges-svelte@1.1.0(@sveltejs/kit@2.36.2(@sveltejs/vite-plugin-svelte@6.1.3(svelte@5.38.3)(vite@7.1.3(@types/node@24.3.0)))(svelte@5.38.3)(vite@7.1.3(@types/node@24.3.0)))(svelte@5.38.3))(svelte@5.38.3):
+  edges-svelte-translations@0.2.0(@sveltejs/kit@2.36.2(@sveltejs/vite-plugin-svelte@6.1.3(svelte@5.38.3)(vite@7.1.3(@types/node@24.3.0)))(svelte@5.38.3)(vite@7.1.3(@types/node@24.3.0)))(edges-svelte@1.1.0(@sveltejs/kit@2.36.2(@sveltejs/vite-plugin-svelte@6.1.3(svelte@5.38.3)(vite@7.1.3(@types/node@24.3.0)))(svelte@5.38.3)(vite@7.1.3(@types/node@24.3.0)))(svelte@5.38.3))(svelte@5.38.3):
     dependencies:
       '@sveltejs/kit': 2.36.2(@sveltejs/vite-plugin-svelte@6.1.3(svelte@5.38.3)(vite@7.1.3(@types/node@24.3.0)))(svelte@5.38.3)(vite@7.1.3(@types/node@24.3.0))
       edges-svelte: 1.1.0(@sveltejs/kit@2.36.2(@sveltejs/vite-plugin-svelte@6.1.3(svelte@5.38.3)(vite@7.1.3(@types/node@24.3.0)))(svelte@5.38.3)(vite@7.1.3(@types/node@24.3.0)))(svelte@5.38.3)
@@ -946,8 +942,6 @@ snapshots:
   kleur@4.1.5: {}
 
   ky@1.9.0: {}
-
-  libphonenumber-js@1.12.13: {}
 
   locate-character@3.0.0: {}
 

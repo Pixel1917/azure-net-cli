@@ -57,7 +57,7 @@ export class {{name}}Repository {
 \t
 \tpublic async collection(query?: I{{name}}CollectionQuery) {
 \t\treturn this.{{datasourceVar}}.createRequest<I{{name}}Collection>(({ http, query: q }) => 
-\t\t\thttp.get(\`\${this.endpoint}\${q.build(query || {})}\`)
+\t\t\thttp.get(\`\${this.endpoint}\${q.build(query ?? {})}\`)
 \t\t).then(res => res.getData());
 \t}
 \t

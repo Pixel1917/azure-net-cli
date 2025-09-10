@@ -32,6 +32,7 @@ const presenterWithCoreTemplate = `import { {{presenterFactory}} } from '$core/p
 import { ApplicationProvider } from '\${{context}}/application';
 import { Create{{name}}Schema, Update{{name}}Schema } from './schema';
 import type { 
+\tI{{name}},
 \tI{{name}}CollectionQuery,
 \tI{{name}}CreateRequest,
 \tI{{name}}UpdateRequest
@@ -47,13 +48,13 @@ export const {{name}}Presenter = {{presenterFactory}}('{{name}}Presenter', ({ cr
 \t\tawait createAsyncResource({{serviceName}}.resource(id));
 \t
 \tconst create = async (request: I{{name}}CreateRequest) =>
-\t\tawait createAsyncAction({{serviceName}}.create(Create{{name}}Schema.from(request).json()));
+\t\tawait createAsyncAction<I{{name}}, I{{name}}CreateRequest>(() => {{serviceName}}.create(Create{{name}}Schema.from(request).json()));
 \t
 \tconst update = async (id: number, request: I{{name}}UpdateRequest) =>
-\t\tawait createAsyncAction({{serviceName}}.update(id, Update{{name}}Schema.from(request).json()));
+\t\tawait createAsyncAction<I{{name}}, I{{name}}UpdateRequest>(() => {{serviceName}}.update(id, Update{{name}}Schema.from(request).json()));
 \t
 \tconst remove = async (id: number) => 
-\t\tawait createAsyncAction({{serviceName}}.remove(id));
+\t\tawait createAsyncAction(() => {{serviceName}}.remove(id));
 \t
 \treturn { collection, resource, create, update, remove };
 });`;
