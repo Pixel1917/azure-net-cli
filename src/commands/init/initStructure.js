@@ -40,10 +40,7 @@ async function createBaseStructure(root, contextName, contextAlias) {
     const infraProviderContent = `import { createBoundaryProvider } from '@azure-net/kit';
 
 export const InfrastructureProvider = createBoundaryProvider(
-\t'${contextName}InfrastructureProvider',
-\t() => ({
-\t\t// Infrastructure services will be added here manually
-\t})
+\t'${contextName}InfrastructureProvider', {register: () => ({})}
 );`;
 
     await fs.writeFile(
@@ -76,10 +73,12 @@ import { InfrastructureProvider } from '\$${contextAlias}/infrastructure';
 
 export const ApplicationProvider = createBoundaryProvider(
 \t'${contextName}ApplicationProvider',
-\t({ InfrastructureProvider }) => ({
+\t{
+\t\tdependsOn: { InfrastructureProvider },
+\t\tregister: ({ InfrastructureProvider }) => ({
 \t\t// Application services will be added here manually
-\t}),
-\t{ dependsOn: { InfrastructureProvider } }
+\t\t}),
+\t}
 );`;
 
     await fs.writeFile(

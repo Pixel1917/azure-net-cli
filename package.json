@@ -1,12 +1,12 @@
 {
   "name": "@azure-net/cli",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "type": "module",
   "bin": {
     "azure-net": "bin/azure-net.js"
   },
   "peerDependencies": {
-    "@azure-net/kit": "^1.2.0"
+    "@azure-net/kit": "^1.3.0"
   },
   "dependencies": {
     "@azure-net/kit": "^1.2.0",
