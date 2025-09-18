@@ -14,7 +14,7 @@ const createSchemaTemplate = `import { {{schemaFactory}} } from '{{schemaImport}
 import type { I{{name}}CreateRequest } from '\${{context}}/domain/{{entityLower}}';
 
 export const Create{{name}}Schema = {{schemaFactory}}<I{{name}}CreateRequest>()
-\t.rules((rules) => ({
+\t.rules(() => ({
 \t\t// Add validation rules here
 \t}))
 \t.create();`;
@@ -23,7 +23,7 @@ const updateSchemaTemplate = `import { {{schemaFactory}} } from '{{schemaImport}
 import type { I{{name}}UpdateRequest } from '\${{context}}/domain/{{entityLower}}';
 
 export const Update{{name}}Schema = {{schemaFactory}}<I{{name}}UpdateRequest>()
-\t.rules((rules) => ({
+\t.rules(() => ({
 \t\t// Add validation rules here
 \t}))
 \t.create();`;
@@ -53,10 +53,10 @@ export const {{name}}Presenter = {{presenterFactory}}('{{name}}Presenter', ({ cr
 \tconst update = async (id: number, request: I{{name}}UpdateRequest) =>
 \t\tawait createAsyncAction<I{{name}}, I{{name}}UpdateRequest>(() => {{serviceName}}.update(id, Update{{name}}Schema.from(request).json()));
 \t
-\tconst remove = async (id: number) => 
-\t\tawait createAsyncAction(() => {{serviceName}}.remove(id));
+\tconst destroy = async (id: number) => 
+\t\tawait createAsyncAction(() => {{serviceName}}.destroy(id));
 \t
-\treturn { collection, resource, create, update, remove };
+\treturn { collection, resource, create, update, destroy };
 });`;
 
 const presenterWithoutCoreTemplate = `import { createPresenter } from '@azure-net/kit';
@@ -83,10 +83,10 @@ export const {{name}}Presenter = createPresenter('{{name}}Presenter', () => {
 \tconst update = async (id: number, request: I{{name}}UpdateRequest) =>
 \t\tawait {{serviceName}}.update(id, Update{{name}}Schema.from(request).json()));
 \t
-\tconst remove = async (id: number) => 
-\t\tawait {{serviceName}}.remove(id);
+\tconst destroy = async (id: number) => 
+\t\tawait {{serviceName}}.destroy(id);
 \t
-\treturn { collection, resource, create, update, remove };
+\treturn { collection, resource, create, update, destroy };
 });`;
 
 export default async function generateCrudPresenter() {

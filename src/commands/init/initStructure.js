@@ -75,7 +75,7 @@ export const ApplicationProvider = createBoundaryProvider(
 \t'${contextName}ApplicationProvider',
 \t{
 \t\tdependsOn: { InfrastructureProvider },
-\t\tregister: ({ InfrastructureProvider }) => ({
+\t\tregister: () => ({
 \t\t// Application services will be added here manually
 \t\t}),
 \t}

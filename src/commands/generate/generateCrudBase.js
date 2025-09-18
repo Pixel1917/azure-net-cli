@@ -20,10 +20,7 @@ const entityTemplate = `export interface I{{name}} {
 
 const portsIndexTemplate = `import type { I{{name}} } from '\${{context}}/domain/{{entityLower}}/model';
 
-export interface I{{name}}Collection {
-\tdata: I{{name}}[];
-\ttotal: number;
-}
+export type I{{name}}Collection = I{{name}}[];
 
 export interface I{{name}}CollectionQuery {
 \tpage?: number;
@@ -79,7 +76,7 @@ export class {{name}}Repository {
 \t\t).then(res => res.getData());
 \t}
 \t
-\tpublic async remove(id: number) {
+\tpublic async destroy(id: number) {
 \t\treturn this.{{datasourceVar}}.createRequest<void>(({ http }) => 
 \t\t\thttp.delete(\`\${this.endpoint}/\${id}\`)
 \t\t).then(() => undefined);
@@ -98,7 +95,7 @@ export class {{name}}Service extends ClassMirror<{{name}}Repository> {
 \tdeclare resource: {{name}}Repository['resource'];
 \tdeclare create: {{name}}Repository['create'];
 \tdeclare update: {{name}}Repository['update'];
-\tdeclare remove: {{name}}Repository['remove'];
+\tdeclare destroy: {{name}}Repository['destroy'];
 }`;
 
 export default async function generateCrudBase() {
