@@ -9,7 +9,8 @@ import {
     initTranslations,
     initSchema,
     initLint,
-    initPresenter
+    initPresenter,
+    migrateStructure
 } from '../src/commands/init/index.js';
 import {
     generateDatasource,
@@ -20,7 +21,12 @@ import {
     generatePresenter,
     generateModule,
     generateCrudBase,
-    generateCrudPresenter
+    generateCrudPresenter,
+    generateModuleBase,
+    generateModulePresenter,
+    generateComponent,
+    generateWidget,
+    generateDesignComponent
 } from '../src/commands/generate/index.js';
 
 const program = new Command();
@@ -70,6 +76,11 @@ program
     .command('init:presenter')
     .description('Initialize presenter factory')
     .action(initPresenter);
+
+program
+    .command('migrate:structure')
+    .description('Migrate existing contexts to new structure with layers and ui folders')
+    .action(migrateStructure);
 
 program
     .command('init')
@@ -123,5 +134,30 @@ program
     .command('make:crud-presenter')
     .description('Generate CRUD presenter for existing service')
     .action(generateCrudPresenter);
+
+program
+    .command('make:module-base')
+    .description('Generate repository and service for a module')
+    .action(generateModuleBase);
+
+program
+    .command('make:module-presenter')
+    .description('Generate presenter for existing service')
+    .action(generateModulePresenter);
+
+program
+    .command('make:component')
+    .description('Generate UI component')
+    .action(generateComponent);
+
+program
+    .command('make:widget')
+    .description('Generate UI widget')
+    .action(generateWidget);
+
+program
+    .command('make:design-component')
+    .description('Generate design system component')
+    .action(generateDesignComponent);
 
 program.parse();

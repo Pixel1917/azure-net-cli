@@ -23,12 +23,12 @@ export default async function generateDatasource() {
 
     const pascalName = toPascalCase(name);
     const contextPath = context === 'core'
-        ? path.join(process.cwd(), 'src/app/core')
+        ? path.join(process.cwd(), 'src/core')
         : getContextPath(context);
 
     // Get available responses
     const coreResponses = await getAvailableFiles(
-        path.join(process.cwd(), 'src/app/core/responses')
+        path.join(process.cwd(), 'src/core/responses')
     );
 
     const contextResponses = context !== 'core'

@@ -45,7 +45,7 @@ export default async function generateSchema() {
 
     // Check for core schemas
     const coreSchemas = await getAvailableFiles(
-        path.join(process.cwd(), 'src/app/core/schemas')
+        path.join(process.cwd(), 'src/core/schemas')
     );
 
     const choices = [

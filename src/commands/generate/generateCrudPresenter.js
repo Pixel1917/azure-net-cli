@@ -114,7 +114,7 @@ export default async function generateCrudPresenter() {
 
     // Get schema factory
     const coreSchemas = await getAvailableFiles(
-        path.join(process.cwd(), 'src/app/core/schemas')
+        path.join(process.cwd(), 'src/core/schemas')
     );
 
     const { schemaType } = await prompts({
@@ -129,7 +129,7 @@ export default async function generateCrudPresenter() {
 
     // Get presenter factory
     const corePresenters = await getAvailableFiles(
-        path.join(process.cwd(), 'src/app/core/presenters')
+        path.join(process.cwd(), 'src/core/presenters')
     );
 
     const { presenterType } = await prompts({

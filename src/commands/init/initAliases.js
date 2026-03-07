@@ -9,9 +9,11 @@ function generateAliases(config) {
     const contexts = config.contexts || ['app'];
 
     return Object.fromEntries([
-        ...contexts.map(c => [`$${c}`, `./src/app/contexts/${c}`]),
-        ['$shared', './src/app/shared'],
-        ['$core', './src/app/core']
+        ...contexts.flatMap(c => [
+            [`$${c}`, `./src/app/${c}/layers`],
+            [`$${c}/ui`, `./src/app/${c}/ui`]
+        ]),
+        ['$core', './src/core']
     ]);
 }
 

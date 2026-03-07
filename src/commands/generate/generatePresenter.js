@@ -42,7 +42,7 @@ export default async function generatePresenter() {
 
     // Check for core presenters
     const corePresenters = await getAvailableFiles(
-        path.join(process.cwd(), 'src/app/core/presenters')
+        path.join(process.cwd(), 'src/core/presenters')
     );
 
     const presenterChoices = [

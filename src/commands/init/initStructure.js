@@ -3,10 +3,8 @@ import path from 'path';
 import { loadUserConfig } from '../../utils/loadConfig.js';
 import { updateCoreIndex } from '../../utils/fileUtils.js';
 
-const APP_ROOT = path.join(process.cwd(), 'src', 'app');
-const CONTEXTS_PATH = path.join(APP_ROOT, 'contexts');
-const SHARED_PATH = path.join(APP_ROOT, 'shared');
-const CORE_PATH = path.join(APP_ROOT, 'core');
+const APP_PATH = path.join(process.cwd(), 'src', 'app');
+const CORE_PATH = path.join(process.cwd(), 'src', 'core');
 
 async function createDirIfNotExists(dirPath) {
     try {
@@ -26,12 +24,19 @@ async function createIndexFile(dirPath, exportPatterns = []) {
 }
 
 async function createBaseStructure(root, contextName, contextAlias) {
+    // Create layers and ui folders
+    const layersPath = path.join(root, 'layers');
+    const uiPath = path.join(root, 'ui');
+
+    await createDirIfNotExists(layersPath);
+    await createDirIfNotExists(uiPath);
+
     // Domain - новая структура
-    const domainPath = path.join(root, 'domain');
+    const domainPath = path.join(layersPath, 'domain');
     await createDirIfNotExists(domainPath);
 
     // Infrastructure
-    const infraPath = path.join(root, 'infrastructure');
+    const infraPath = path.join(layersPath, 'infrastructure');
     await createDirIfNotExists(path.join(infraPath, 'http', 'repositories'));
     await createDirIfNotExists(path.join(infraPath, 'http', 'datasources'));
     await createDirIfNotExists(path.join(infraPath, 'providers'));
@@ -63,7 +68,7 @@ export const InfrastructureProvider = createBoundaryProvider(
     );
 
     // Application
-    const appPath = path.join(root, 'application');
+    const appPath = path.join(layersPath, 'application');
     await createDirIfNotExists(path.join(appPath, 'services'));
     await createDirIfNotExists(path.join(appPath, 'providers'));
 
@@ -101,7 +106,7 @@ export const ApplicationProvider = createBoundaryProvider(
     );
 
     // Delivery - organized by modules
-    const deliveryPath = path.join(root, 'delivery');
+    const deliveryPath = path.join(layersPath, 'delivery');
     await createDirIfNotExists(deliveryPath);
 }
 
@@ -111,17 +116,14 @@ export default async function initStructure() {
 
     console.log('📦 Generating architecture...');
 
-    // Create contexts
+    // Create contexts directly in src/app
     for (const context of contexts) {
-        const contextPath = path.join(CONTEXTS_PATH, context);
+        const contextPath = path.join(APP_PATH, context);
         const contextName = context.charAt(0).toUpperCase() + context.slice(1);
         await createBaseStructure(contextPath, contextName, context);
     }
 
-    // Create empty shared folder
-    await createDirIfNotExists(SHARED_PATH);
-
-    // Create core structure with all functionality
+    // Create core structure with all functionality (in src/core, not src/app/core)
     await createDirIfNotExists(CORE_PATH);
     await createDirIfNotExists(path.join(CORE_PATH, 'datasources'));
     await createDirIfNotExists(path.join(CORE_PATH, 'responses'));
@@ -129,6 +131,7 @@ export default async function initStructure() {
     await createDirIfNotExists(path.join(CORE_PATH, 'middleware'));
     await createDirIfNotExists(path.join(CORE_PATH, 'presenters'));
     await createDirIfNotExists(path.join(CORE_PATH, 'translations'));
+    await createDirIfNotExists(path.join(CORE_PATH, 'providers'));
 
     // Update core index
     await updateCoreIndex();

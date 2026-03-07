@@ -29,7 +29,7 @@ export async function updateIndexTs(dir, filePattern = '.ts', ignore = ['index.t
 }
 
 export async function updateCoreIndex() {
-    const corePath = path.join(process.cwd(), 'src/app/core');
+    const corePath = path.join(process.cwd(), 'src/core');
     try {
         const dirs = await fs.readdir(corePath, { withFileTypes: true });
         const validDirs = [];

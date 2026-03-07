@@ -10,7 +10,6 @@ import {
 } from '../../utils/contextUtils.js';
 import { writeIfNotExists, updateIndexTs, updateCoreIndex } from '../../utils/fileUtils.js';
 
-// Templates for CRUD base generation
 const entityTemplate = `export interface I{{name}} {
 \tid: number;
 \t// Add entity fields here
@@ -18,68 +17,17 @@ const entityTemplate = `export interface I{{name}} {
 \tupdated_at: string;
 }`;
 
-const portsIndexTemplate = `import type { I{{name}} } from '\${{context}}/domain/{{entityLower}}/model';
-
-export type I{{name}}Collection = I{{name}}[];
-
-export interface I{{name}}CollectionQuery {
-\tpage?: number;
-\tperPage?: number;
-\t[key: string]: unknown;
-}
-
-export interface I{{name}}CreateRequest {
-\t// Add request fields here
-\t[key: string]: unknown;
-}
-
-export interface I{{name}}UpdateRequest {
-\t// Add request fields here
-\t[key: string]: unknown;
-}`;
-
 const repositoryTemplate = `import { {{datasource}} } from '{{datasourceImport}}';
-import type { 
-\tI{{name}},
-\tI{{name}}Collection,
-\tI{{name}}CollectionQuery,
-\tI{{name}}CreateRequest,
-\tI{{name}}UpdateRequest
-} from '\${{context}}/domain/{{entityLower}}';
 
 export class {{name}}Repository {
 \tprivate endpoint = '{{endpoint}}';
 \t
 \tconstructor(private {{datasourceVar}}: {{datasource}}) {}
 \t
-\tpublic async collection(query?: I{{name}}CollectionQuery) {
-\t\treturn this.{{datasourceVar}}.createRequest<I{{name}}Collection>(({ http, query: q }) => 
-\t\t\thttp.get(\`\${this.endpoint}\${q.build(query ?? {})}\`)
+\tpublic async example() {
+\t\treturn this.{{datasourceVar}}.createRequest(({ http }) =>
+\t\t\thttp.get(this.endpoint)
 \t\t).then(res => res.getData());
-\t}
-\t
-\tpublic async resource(id: number) {
-\t\treturn this.{{datasourceVar}}.createRequest<I{{name}}>(({ http }) => 
-\t\t\thttp.get(\`\${this.endpoint}/\${id}\`)
-\t\t).then(res => res.getData());
-\t}
-\t
-\tpublic async create(data: I{{name}}CreateRequest) {
-\t\treturn this.{{datasourceVar}}.createRequest<I{{name}}>(({ http }) => 
-\t\t\thttp.post(this.endpoint, { json: data })
-\t\t).then(res => res.getData());
-\t}
-\t
-\tpublic async update(id: number, data: I{{name}}UpdateRequest) {
-\t\treturn this.{{datasourceVar}}.createRequest<I{{name}}>(({ http }) => 
-\t\t\thttp.put(\`\${this.endpoint}/\${id}\`, { json: data })
-\t\t).then(res => res.getData());
-\t}
-\t
-\tpublic async destroy(id: number) {
-\t\treturn this.{{datasourceVar}}.createRequest<void>(({ http }) => 
-\t\t\thttp.delete(\`\${this.endpoint}/\${id}\`)
-\t\t).then(() => undefined);
 \t}
 }`;
 
@@ -91,26 +39,29 @@ export class {{name}}Service extends ClassMirror<{{name}}Repository> {
 \t\tsuper({{camelName}}Repository);
 \t}
 \t
-\tdeclare collection: {{name}}Repository['collection'];
-\tdeclare resource: {{name}}Repository['resource'];
-\tdeclare create: {{name}}Repository['create'];
-\tdeclare update: {{name}}Repository['update'];
-\tdeclare destroy: {{name}}Repository['destroy'];
+\tdeclare example: {{name}}Repository['example'];
 }`;
 
-export default async function generateCrudBase() {
-    const context = await selectContext('Select context for CRUD base:');
+export default async function generateModuleBase() {
+    const context = await selectContext('Select context for module base:');
 
     const { name } = await prompts({
         type: 'text',
         name: 'name',
-        message: 'Entity name (PascalCase):'
+        message: 'Module name (PascalCase):'
     });
 
     const { endpoint } = await prompts({
         type: 'text',
         name: 'endpoint',
         message: 'API endpoint (e.g. /api/users):'
+    });
+
+    const { needEntity } = await prompts({
+        type: 'confirm',
+        name: 'needEntity',
+        message: 'Create domain entity?',
+        initial: true
     });
 
     // Get available datasources
@@ -138,33 +89,30 @@ export default async function generateCrudBase() {
     const camelName = toCamelCase(name);
     const entityLower = toKebabCase(pascalName);
 
-    console.log('\n🚀 Generating CRUD base (repository & service)...\n');
+    console.log('\n🚀 Generating module base (repository & service)...\n');
 
-    // 1. Create Domain structure
-    const domainPath = path.join(contextPath, 'domain', entityLower);
-    const modelPath = path.join(domainPath, 'model');
-    const portsPath = path.join(domainPath, 'ports');
+    // 1. Create Domain entity if needed
+    if (needEntity) {
+        const domainPath = path.join(contextPath, 'domain', entityLower);
+        const modelPath = path.join(domainPath, 'model');
 
-    // Create Model
-    await writeIfNotExists(
-        path.join(modelPath, 'index.ts'),
-        entityTemplate.replace(/{{name}}/g, pascalName)
-    );
+        await writeIfNotExists(
+            path.join(modelPath, `I${pascalName}.ts`),
+            entityTemplate.replace(/{{name}}/g, pascalName)
+        );
 
-    // Create Ports
-    await writeIfNotExists(
-        path.join(portsPath, 'index.ts'),
-        portsIndexTemplate
-            .replace(/{{name}}/g, pascalName)
-            .replace(/{{context}}/g, context)
-            .replace(/{{entityLower}}/g, entityLower)
-    );
+        await writeIfNotExists(
+            path.join(modelPath, 'index.ts'),
+            `export * from './I${pascalName}';`
+        );
 
-    // Create Domain module index
-    await writeIfNotExists(
-        path.join(domainPath, 'index.ts'),
-        `export * from './model';\nexport * from './ports';`
-    );
+        await writeIfNotExists(
+            path.join(domainPath, 'index.ts'),
+            `export * from './model';`
+        );
+
+        console.log(`✅ Domain entity I${pascalName} created`);
+    }
 
     // 2. Create Repository
     const repoPath = path.join(contextPath, 'infrastructure/http/repositories');
@@ -176,12 +124,10 @@ export default async function generateCrudBase() {
         path.join(repoPath, `${pascalName}Repository.ts`),
         repositoryTemplate
             .replace(/{{name}}/g, pascalName)
-            .replace(/{{context}}/g, context)
             .replace(/{{endpoint}}/g, endpoint)
             .replace(/{{datasource}}/g, datasource.name)
             .replace(/{{datasourceImport}}/g, datasourceImport)
             .replace(/{{datasourceVar}}/g, toCamelCase(datasource.name))
-            .replace(/{{entityLower}}/g, entityLower)
     );
     await updateIndexTs(repoPath);
 
@@ -199,9 +145,8 @@ export default async function generateCrudBase() {
     // Update core index
     await updateCoreIndex();
 
-    console.log(`✅ CRUD base for ${pascalName} created successfully!`);
+    console.log(`\n✅ Module base for ${pascalName} created successfully!`);
     console.log(`\n💡 Remember to:`);
     console.log(`   1. Add ${pascalName}Repository to InfrastructureProvider`);
     console.log(`   2. Add ${pascalName}Service to ApplicationProvider`);
-    console.log(`   3. Use 'make:crud-presenter' to create the CRUD presenter`);
 }

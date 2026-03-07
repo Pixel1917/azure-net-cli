@@ -1,7 +1,7 @@
 import { writeIfNotExists, updateCoreIndex } from '../../utils/fileUtils.js';
 import path from 'path';
 
-const translationsPath = path.join(process.cwd(), 'src/app/core/translations');
+const translationsPath = path.join(process.cwd(), 'src/core/translations');
 
 const translationProviderTemplate = `import { messages } from './locales';
 import { createTranslations } from '@azure-net/kit/i18n';

@@ -3,8 +3,8 @@ import path from 'path';
 import prompts from 'prompts';
 import { loadUserConfig } from './loadConfig.js';
 
-const CONTEXTS_PATH = path.join(process.cwd(), 'src/app/contexts');
-const CORE_PATH = path.join(process.cwd(), 'src/app/core');
+const APP_PATH = path.join(process.cwd(), 'src/app');
+const CORE_PATH = path.join(process.cwd(), 'src/core');
 
 export async function selectContext(message = 'Select context:') {
     const config = await loadUserConfig();
@@ -26,7 +26,7 @@ export async function selectContext(message = 'Select context:') {
 export function getContextPath(context) {
     return context === 'core'
         ? CORE_PATH
-        : path.join(CONTEXTS_PATH, context);
+        : path.join(APP_PATH, context, 'layers');
 }
 
 export async function getAvailableFiles(dir, pattern = '.ts') {

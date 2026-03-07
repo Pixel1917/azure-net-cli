@@ -19,7 +19,7 @@ export default async function generateResponse() {
 
     const pascalName = toPascalCase(name);
     const contextPath = context === 'core'
-        ? path.join(process.cwd(), 'src/app/core')
+        ? path.join(process.cwd(), 'src/core')
         : getContextPath(context);
 
     const responsePath = context === 'core'

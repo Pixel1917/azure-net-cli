@@ -7,3 +7,8 @@ export { default as generatePresenter } from './generatePresenter.js';
 export { default as generateModule } from './generateModule.js';
 export { default as generateCrudBase } from './generateCrudBase.js';
 export { default as generateCrudPresenter } from './generateCrudPresenter.js';
+export { default as generateModuleBase } from './generateModuleBase.js';
+export { default as generateModulePresenter } from './generateModulePresenter.js';
+export { default as generateComponent } from './generateComponent.js';
+export { default as generateWidget } from './generateWidget.js';
+export { default as generateDesignComponent } from './generateDesignComponent.js';

@@ -27,7 +27,7 @@ export default async function generateRepository() {
     // Get available datasources
     const contextPath = getContextPath(context);
     const coreDatasources = await getAvailableFiles(
-        path.join(process.cwd(), 'src/app/core/datasources')
+        path.join(process.cwd(), 'src/core/datasources')
     );
     const contextDatasources = await getAvailableFiles(
         path.join(contextPath, 'infrastructure/http/datasources')
