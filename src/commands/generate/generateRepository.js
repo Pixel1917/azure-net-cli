@@ -16,61 +16,55 @@ export class {{name}}Repository {
 }`;
 
 export default async function generateRepository() {
-    const context = await selectContext('Select context for repository:');
+	const context = await selectContext('Select context for repository:');
 
-    const { name } = await prompts({
-        type: 'text',
-        name: 'name',
-        message: 'Repository name (without "Repository" suffix):'
-    });
+	const { name } = await prompts({
+		type: 'text',
+		name: 'name',
+		message: 'Repository name (without "Repository" suffix):'
+	});
 
-    // Get available datasources
-    const contextPath = getContextPath(context);
-    const coreDatasources = await getAvailableFiles(
-        path.join(process.cwd(), 'src/core/datasources')
-    );
-    const contextDatasources = await getAvailableFiles(
-        path.join(contextPath, 'infrastructure/http/datasources')
-    );
+	// Get available datasources
+	const contextPath = getContextPath(context);
+	const coreDatasources = await getAvailableFiles(path.join(process.cwd(), 'src/core/datasources'));
+	const contextDatasources = await getAvailableFiles(path.join(contextPath, 'infrastructure/http/datasources'));
 
-    const allDatasources = [
-        ...coreDatasources.map(d => ({ title: `${d} (core)`, value: { name: d, from: 'core' } })),
-        ...contextDatasources.map(d => ({ title: `${d} (${context})`, value: { name: d, from: context } }))
-    ];
+	const allDatasources = [
+		...coreDatasources.map((d) => ({ title: `${d} (core)`, value: { name: d, from: 'core' } })),
+		...contextDatasources.map((d) => ({ title: `${d} (${context})`, value: { name: d, from: context } }))
+	];
 
-    if (allDatasources.length === 0) {
-        console.error('❌ No datasources available. Create a datasource first.');
-        return;
-    }
+	if (allDatasources.length === 0) {
+		console.error('❌ No datasources available. Create a datasource first.');
+		return;
+	}
 
-    const { datasource } = await prompts({
-        type: 'select',
-        name: 'datasource',
-        message: 'Select datasource:',
-        choices: allDatasources
-    });
+	const { datasource } = await prompts({
+		type: 'select',
+		name: 'datasource',
+		message: 'Select datasource:',
+		choices: allDatasources
+	});
 
-    const pascalName = toPascalCase(name);
-    const repoPath = path.join(contextPath, 'infrastructure/http/repositories');
-    const filePath = path.join(repoPath, `${pascalName}Repository.ts`);
+	const pascalName = toPascalCase(name);
+	const repoPath = path.join(contextPath, 'infrastructure/http/repositories');
+	const filePath = path.join(repoPath, `${pascalName}Repository.ts`);
 
-    // Generate repository
-    const datasourceImport = datasource.from === 'core'
-        ? '$core/datasources'
-        : `\${context}/infrastructure/http/datasources`;
+	// Generate repository
+	const datasourceImport = datasource.from === 'core' ? '$core/datasources' : `\${context}/infrastructure/http/datasources`;
 
-    const content = repositoryTemplate
-        .replace(/{{name}}/g, pascalName)
-        .replace(/{{datasource}}/g, datasource.name)
-        .replace(/{{datasourceImport}}/g, datasourceImport)
-        .replace(/{{datasourceVar}}/g, toCamelCase(datasource.name));
+	const content = repositoryTemplate
+		.replace(/{{name}}/g, pascalName)
+		.replace(/{{datasource}}/g, datasource.name)
+		.replace(/{{datasourceImport}}/g, datasourceImport)
+		.replace(/{{datasourceVar}}/g, toCamelCase(datasource.name));
 
-    await writeIfNotExists(filePath, content);
-    await updateIndexTs(repoPath);
+	await writeIfNotExists(filePath, content);
+	await updateIndexTs(repoPath);
 
-    // Update core index
-    await updateCoreIndex();
+	// Update core index
+	await updateCoreIndex();
 
-    console.log(`✅ Repository created at ${filePath}`);
-    console.log(`\n💡 Remember to manually add this repository to InfrastructureProvider when needed.`);
+	console.log(`✅ Repository created at ${filePath}`);
+	console.log(`\n💡 Remember to manually add this repository to InfrastructureProvider when needed.`);
 }

@@ -1,5 +1,3 @@
-export { default as generateDatasource } from './generateDatasource.js';
-export { default as generateResponse } from './generateResponse.js';
 export { default as generateRepository } from './generateRepository.js';
 export { default as generateService } from './generateService.js';
 export { default as generateSchema } from './generateSchema.js';
@@ -9,6 +7,3 @@ export { default as generateCrudBase } from './generateCrudBase.js';
 export { default as generateCrudPresenter } from './generateCrudPresenter.js';
 export { default as generateModuleBase } from './generateModuleBase.js';
 export { default as generateModulePresenter } from './generateModulePresenter.js';
-export { default as generateComponent } from './generateComponent.js';
-export { default as generateWidget } from './generateWidget.js';
-export { default as generateDesignComponent } from './generateDesignComponent.js';

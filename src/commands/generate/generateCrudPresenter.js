@@ -1,12 +1,12 @@
 import prompts from 'prompts';
 import path from 'path';
 import {
-    selectContext,
-    getContextPath,
-    toPascalCase,
-    getAvailableFiles,
-    getApplicationProviderServices,
-    toKebabCase
+	selectContext,
+	getContextPath,
+	toPascalCase,
+	getAvailableFiles,
+	getApplicationProviderServices,
+	toKebabCase
 } from '../../utils/contextUtils.js';
 import { updateIndexTs, writeIfNotExists, updateCoreIndex } from '../../utils/fileUtils.js';
 
@@ -90,143 +90,136 @@ export const {{name}}Presenter = createPresenter('{{name}}Presenter', () => {
 });`;
 
 export default async function generateCrudPresenter() {
-    const context = await selectContext('Select context for CRUD presenter:');
+	const context = await selectContext('Select context for CRUD presenter:');
 
-    // Get available services from ApplicationProvider
-    const services = await getApplicationProviderServices(context);
+	// Get available services from ApplicationProvider
+	const services = await getApplicationProviderServices(context);
 
-    if (services.length === 0) {
-        console.error('❌ No services found in ApplicationProvider. Add services manually first.');
-        return;
-    }
+	if (services.length === 0) {
+		console.error('❌ No services found in ApplicationProvider. Add services manually first.');
+		return;
+	}
 
-    const { service } = await prompts({
-        type: 'select',
-        name: 'service',
-        message: 'Select service for CRUD:',
-        choices: services.map(s => ({ title: s, value: s }))
-    });
+	const { service } = await prompts({
+		type: 'select',
+		name: 'service',
+		message: 'Select service for CRUD:',
+		choices: services.map((s) => ({ title: s, value: s }))
+	});
 
-    // Extract entity name from service name
-    const entityName = service.replace('Service', '');
-    const pascalName = toPascalCase(entityName);
-    const entityLower = toKebabCase(pascalName);
+	// Extract entity name from service name
+	const entityName = service.replace('Service', '');
+	const pascalName = toPascalCase(entityName);
+	const entityLower = toKebabCase(pascalName);
 
-    // Get schema factory
-    const coreSchemas = await getAvailableFiles(
-        path.join(process.cwd(), 'src/core/schemas')
-    );
+	// Get schema factory
+	const coreSchemas = await getAvailableFiles(path.join(process.cwd(), 'src/core/schemas'));
 
-    const { schemaType } = await prompts({
-        type: 'select',
-        name: 'schemaType',
-        message: 'Select schema factory:',
-        choices: [
-            { title: 'Use createSchemaFactory from package', value: 'package' },
-            ...coreSchemas.map(s => ({ title: `Use ${s} from core`, value: s }))
-        ]
-    });
+	const { schemaType } = await prompts({
+		type: 'select',
+		name: 'schemaType',
+		message: 'Select schema factory:',
+		choices: [
+			{ title: 'Use createSchemaFactory from package', value: 'package' },
+			...coreSchemas.map((s) => ({ title: `Use ${s} from core`, value: s }))
+		]
+	});
 
-    // Get presenter factory
-    const corePresenters = await getAvailableFiles(
-        path.join(process.cwd(), 'src/core/presenters')
-    );
+	// Get presenter factory
+	const corePresenters = await getAvailableFiles(path.join(process.cwd(), 'src/core/presenters'));
 
-    const { presenterType } = await prompts({
-        type: 'select',
-        name: 'presenterType',
-        message: 'Select presenter factory:',
-        choices: [
-            { title: 'Use createPresenter from package', value: 'package' },
-            ...corePresenters.map(p => ({ title: `Use ${p} from core`, value: p }))
-        ]
-    });
+	const { presenterType } = await prompts({
+		type: 'select',
+		name: 'presenterType',
+		message: 'Select presenter factory:',
+		choices: [
+			{ title: 'Use createPresenter from package', value: 'package' },
+			...corePresenters.map((p) => ({ title: `Use ${p} from core`, value: p }))
+		]
+	});
 
-    const contextPath = getContextPath(context);
-    const deliveryModulePath = path.join(contextPath, 'delivery', entityLower);
-    const schemaPath = path.join(deliveryModulePath, 'schema');
+	const contextPath = getContextPath(context);
+	const deliveryModulePath = path.join(contextPath, 'delivery', entityLower);
+	const schemaPath = path.join(deliveryModulePath, 'schema');
 
-    console.log('\n🚀 Generating CRUD presenter...\n');
+	console.log('\n🚀 Generating CRUD presenter...\n');
 
-    // Create schemas
-    const schemaFactory = schemaType === 'package' ? 'Schema' : schemaType;
-    const schemaImport = schemaType === 'package'
-        ? '@azure-net/kit'
-        : '$core/schemas';
+	// Create schemas
+	const schemaFactory = schemaType === 'package' ? 'Schema' : schemaType;
+	const schemaImport = schemaType === 'package' ? '@azure-net/kit' : '$core/schemas';
 
-    if (schemaType === 'package') {
-        const schemaImportFull = `import { createSchemaFactory } from '@azure-net/kit';
+	if (schemaType === 'package') {
+		const schemaImportFull = `import { createSchemaFactory } from '@azure-net/kit';
 import { createRules, validationMessagesI18n } from '@azure-net/kit/schema';
 
 const Schema = createSchemaFactory(createRules(validationMessagesI18n));`;
 
-        await writeIfNotExists(
-            path.join(schemaPath, `Create${pascalName}Schema.ts`),
-            schemaImportFull + '\n' + createSchemaTemplate
-                .replace('import { {{schemaFactory}} } from \'{{schemaImport}}\';\n', '')
-                .replace(/{{name}}/g, pascalName)
-                .replace(/{{context}}/g, context)
-                .replace(/{{entityLower}}/g, entityLower)
-                .replace(/{{schemaFactory}}/g, 'Schema')
-        );
+		await writeIfNotExists(
+			path.join(schemaPath, `Create${pascalName}Schema.ts`),
+			schemaImportFull +
+				'\n' +
+				createSchemaTemplate
+					.replace("import { {{schemaFactory}} } from '{{schemaImport}}';\n", '')
+					.replace(/{{name}}/g, pascalName)
+					.replace(/{{context}}/g, context)
+					.replace(/{{entityLower}}/g, entityLower)
+					.replace(/{{schemaFactory}}/g, 'Schema')
+		);
 
-        await writeIfNotExists(
-            path.join(schemaPath, `Update${pascalName}Schema.ts`),
-            schemaImportFull + '\n' + updateSchemaTemplate
-                .replace('import { {{schemaFactory}} } from \'{{schemaImport}}\';\n', '')
-                .replace(/{{name}}/g, pascalName)
-                .replace(/{{context}}/g, context)
-                .replace(/{{entityLower}}/g, entityLower)
-                .replace(/{{schemaFactory}}/g, 'Schema')
-        );
-    } else {
-        await writeIfNotExists(
-            path.join(schemaPath, `Create${pascalName}Schema.ts`),
-            createSchemaTemplate
-                .replace(/{{name}}/g, pascalName)
-                .replace(/{{context}}/g, context)
-                .replace(/{{entityLower}}/g, entityLower)
-                .replace(/{{schemaFactory}}/g, schemaFactory)
-                .replace(/{{schemaImport}}/g, schemaImport)
-        );
+		await writeIfNotExists(
+			path.join(schemaPath, `Update${pascalName}Schema.ts`),
+			schemaImportFull +
+				'\n' +
+				updateSchemaTemplate
+					.replace("import { {{schemaFactory}} } from '{{schemaImport}}';\n", '')
+					.replace(/{{name}}/g, pascalName)
+					.replace(/{{context}}/g, context)
+					.replace(/{{entityLower}}/g, entityLower)
+					.replace(/{{schemaFactory}}/g, 'Schema')
+		);
+	} else {
+		await writeIfNotExists(
+			path.join(schemaPath, `Create${pascalName}Schema.ts`),
+			createSchemaTemplate
+				.replace(/{{name}}/g, pascalName)
+				.replace(/{{context}}/g, context)
+				.replace(/{{entityLower}}/g, entityLower)
+				.replace(/{{schemaFactory}}/g, schemaFactory)
+				.replace(/{{schemaImport}}/g, schemaImport)
+		);
 
-        await writeIfNotExists(
-            path.join(schemaPath, `Update${pascalName}Schema.ts`),
-            updateSchemaTemplate
-                .replace(/{{name}}/g, pascalName)
-                .replace(/{{context}}/g, context)
-                .replace(/{{entityLower}}/g, entityLower)
-                .replace(/{{schemaFactory}}/g, schemaFactory)
-                .replace(/{{schemaImport}}/g, schemaImport)
-        );
-    }
-    await updateIndexTs(schemaPath);
+		await writeIfNotExists(
+			path.join(schemaPath, `Update${pascalName}Schema.ts`),
+			updateSchemaTemplate
+				.replace(/{{name}}/g, pascalName)
+				.replace(/{{context}}/g, context)
+				.replace(/{{entityLower}}/g, entityLower)
+				.replace(/{{schemaFactory}}/g, schemaFactory)
+				.replace(/{{schemaImport}}/g, schemaImport)
+		);
+	}
+	await updateIndexTs(schemaPath);
 
-    // Create Presenter
-    const presenterTemplate = presenterType === 'package'
-        ? presenterWithoutCoreTemplate
-        : presenterWithCoreTemplate;
+	// Create Presenter
+	const presenterTemplate = presenterType === 'package' ? presenterWithoutCoreTemplate : presenterWithCoreTemplate;
 
-    const presenterFactory = presenterType === 'package' ? 'createPresenter' : presenterType;
+	const presenterFactory = presenterType === 'package' ? 'createPresenter' : presenterType;
 
-    await writeIfNotExists(
-        path.join(deliveryModulePath, `${pascalName}Presenter.ts`),
-        presenterTemplate
-            .replace(/{{name}}/g, pascalName)
-            .replace(/{{context}}/g, context)
-            .replace(/{{serviceName}}/g, service)
-            .replace(/{{presenterFactory}}/g, presenterFactory)
-            .replace(/{{entityLower}}/g, entityLower)
-    );
+	await writeIfNotExists(
+		path.join(deliveryModulePath, `${pascalName}Presenter.ts`),
+		presenterTemplate
+			.replace(/{{name}}/g, pascalName)
+			.replace(/{{context}}/g, context)
+			.replace(/{{serviceName}}/g, service)
+			.replace(/{{presenterFactory}}/g, presenterFactory)
+			.replace(/{{entityLower}}/g, entityLower)
+	);
 
-    // Create module index
-    await writeIfNotExists(
-        path.join(deliveryModulePath, 'index.ts'),
-        `export * from './${pascalName}Presenter';\nexport * from './schema';`
-    );
+	// Create module index
+	await writeIfNotExists(path.join(deliveryModulePath, 'index.ts'), `export * from './${pascalName}Presenter';\nexport * from './schema';`);
 
-    // Update core index
-    await updateCoreIndex();
+	// Update core index
+	await updateCoreIndex();
 
-    console.log(`✅ CRUD presenter for ${pascalName} created successfully!`);
+	console.log(`✅ CRUD presenter for ${pascalName} created successfully!`);
 }

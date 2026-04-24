@@ -1,13 +1,6 @@
 import prompts from 'prompts';
 import path from 'path';
-import {
-    selectContext,
-    getContextPath,
-    toPascalCase,
-    toCamelCase,
-    getAvailableFiles,
-    toKebabCase
-} from '../../utils/contextUtils.js';
+import { selectContext, getContextPath, toPascalCase, toCamelCase, getAvailableFiles, toKebabCase } from '../../utils/contextUtils.js';
 import { writeIfNotExists, updateIndexTs, updateCoreIndex } from '../../utils/fileUtils.js';
 
 // Templates for CRUD base generation
@@ -99,109 +92,97 @@ export class {{name}}Service extends ClassMirror<{{name}}Repository> {
 }`;
 
 export default async function generateCrudBase() {
-    const context = await selectContext('Select context for CRUD base:');
+	const context = await selectContext('Select context for CRUD base:');
 
-    const { name } = await prompts({
-        type: 'text',
-        name: 'name',
-        message: 'Entity name (PascalCase):'
-    });
+	const { name } = await prompts({
+		type: 'text',
+		name: 'name',
+		message: 'Entity name (PascalCase):'
+	});
 
-    const { endpoint } = await prompts({
-        type: 'text',
-        name: 'endpoint',
-        message: 'API endpoint (e.g. /api/users):'
-    });
+	const { endpoint } = await prompts({
+		type: 'text',
+		name: 'endpoint',
+		message: 'API endpoint (e.g. /api/users):'
+	});
 
-    // Get available datasources
-    const contextPath = getContextPath(context);
-    const coreDatasources = await getAvailableFiles(
-        path.join(process.cwd(), 'src/core/datasources')
-    );
-    const contextDatasources = await getAvailableFiles(
-        path.join(contextPath, 'infrastructure/http/datasources')
-    );
+	// Get available datasources
+	const contextPath = getContextPath(context);
+	const coreDatasources = await getAvailableFiles(path.join(process.cwd(), 'src/core/datasources'));
+	const contextDatasources = await getAvailableFiles(path.join(contextPath, 'infrastructure/http/datasources'));
 
-    const allDatasources = [
-        ...coreDatasources.map(d => ({ title: `${d} (core)`, value: { name: d, from: 'core' } })),
-        ...contextDatasources.map(d => ({ title: `${d} (${context})`, value: { name: d, from: context } }))
-    ];
+	const allDatasources = [
+		...coreDatasources.map((d) => ({ title: `${d} (core)`, value: { name: d, from: 'core' } })),
+		...contextDatasources.map((d) => ({ title: `${d} (${context})`, value: { name: d, from: context } }))
+	];
 
-    const { datasource } = await prompts({
-        type: 'select',
-        name: 'datasource',
-        message: 'Select datasource:',
-        choices: allDatasources
-    });
+	const { datasource } = await prompts({
+		type: 'select',
+		name: 'datasource',
+		message: 'Select datasource:',
+		choices: allDatasources
+	});
 
-    const pascalName = toPascalCase(name);
-    const camelName = toCamelCase(name);
-    const entityLower = toKebabCase(pascalName);
+	const pascalName = toPascalCase(name);
+	const camelName = toCamelCase(name);
+	const entityLower = toKebabCase(pascalName);
 
-    console.log('\n🚀 Generating CRUD base (repository & service)...\n');
+	console.log('\n🚀 Generating CRUD base (repository & service)...\n');
 
-    // 1. Create Domain structure
-    const domainPath = path.join(contextPath, 'domain', entityLower);
-    const modelPath = path.join(domainPath, 'model');
-    const portsPath = path.join(domainPath, 'ports');
+	// 1. Create Domain structure
+	const domainPath = path.join(contextPath, 'domain', entityLower);
+	const modelPath = path.join(domainPath, 'model');
+	const portsPath = path.join(domainPath, 'ports');
 
-    // Create Model
-    await writeIfNotExists(
-        path.join(modelPath, 'index.ts'),
-        entityTemplate.replace(/{{name}}/g, pascalName)
-    );
+	// Create Model
+	await writeIfNotExists(path.join(modelPath, 'index.ts'), entityTemplate.replace(/{{name}}/g, pascalName));
 
-    // Create Ports
-    await writeIfNotExists(
-        path.join(portsPath, 'index.ts'),
-        portsIndexTemplate
-            .replace(/{{name}}/g, pascalName)
-            .replace(/{{context}}/g, context)
-            .replace(/{{entityLower}}/g, entityLower)
-    );
+	// Create Ports
+	await writeIfNotExists(
+		path.join(portsPath, 'index.ts'),
+		portsIndexTemplate
+			.replace(/{{name}}/g, pascalName)
+			.replace(/{{context}}/g, context)
+			.replace(/{{entityLower}}/g, entityLower)
+	);
 
-    // Create Domain module index
-    await writeIfNotExists(
-        path.join(domainPath, 'index.ts'),
-        `export * from './model';\nexport * from './ports';`
-    );
+	// Create Domain module index
+	await writeIfNotExists(path.join(domainPath, 'index.ts'), `export * from './model';\nexport * from './ports';`);
 
-    // 2. Create Repository
-    const repoPath = path.join(contextPath, 'infrastructure/http/repositories');
-    const datasourceImport = datasource.from === 'core'
-        ? '$core/datasources'
-        : `\$${context}/infrastructure/http/datasources`;
+	// 2. Create Repository
+	const repoPath = path.join(contextPath, 'infrastructure/http/repositories');
+	const datasourceImport = datasource.from === 'core' ? '$core/datasources' : `\$${context}/infrastructure/http/datasources`;
 
-    await writeIfNotExists(
-        path.join(repoPath, `${pascalName}Repository.ts`),
-        repositoryTemplate
-            .replace(/{{name}}/g, pascalName)
-            .replace(/{{context}}/g, context)
-            .replace(/{{endpoint}}/g, endpoint)
-            .replace(/{{datasource}}/g, datasource.name)
-            .replace(/{{datasourceImport}}/g, datasourceImport)
-            .replace(/{{datasourceVar}}/g, toCamelCase(datasource.name))
-            .replace(/{{entityLower}}/g, entityLower)
-    );
-    await updateIndexTs(repoPath);
+	await writeIfNotExists(
+		path.join(repoPath, `${pascalName}Repository.ts`),
+		repositoryTemplate
+			.replace(/{{name}}/g, pascalName)
+			.replace(/{{context}}/g, context)
+			.replace(/{{endpoint}}/g, endpoint)
+			.replace(/{{datasource}}/g, datasource.name)
+			.replace(/{{datasourceImport}}/g, datasourceImport)
+			.replace(/{{datasourceVar}}/g, toCamelCase(datasource.name))
+			.replace(/{{entityLower}}/g, entityLower)
+	);
+	await updateIndexTs(repoPath);
 
-    // 3. Create Service
-    const servicePath = path.join(contextPath, 'application/services');
-    await writeIfNotExists(
-        path.join(servicePath, `${pascalName}Service.ts`),
-        serviceTemplate
-            .replace(/{{name}}/g, pascalName)
-            .replace(/{{camelName}}/g, camelName)
-            .replace(/{{context}}/g, context)
-    );
-    await updateIndexTs(servicePath);
+	// 3. Create Service
+	const servicePath = path.join(contextPath, 'application/services');
+	await writeIfNotExists(
+		path.join(servicePath, `${pascalName}Service.ts`),
+		serviceTemplate
+			.replace(/{{name}}/g, pascalName)
+			.replace(/{{camelName}}/g, camelName)
+			.replace(/{{context}}/g, context)
+	);
+	await updateIndexTs(servicePath);
 
-    // Update core index
-    await updateCoreIndex();
+	// Update core index
+	await updateCoreIndex();
 
-    console.log(`✅ CRUD base for ${pascalName} created successfully!`);
-    console.log(`\n💡 Remember to:`);
-    console.log(`   1. Add ${pascalName}Repository to InfrastructureProvider`);
-    console.log(`   2. Add ${pascalName}Service to ApplicationProvider`);
-    console.log(`   3. Use 'make:crud-presenter' to create the CRUD presenter`);
+	console.log(`✅ CRUD base for ${pascalName} created successfully!`);
+	console.log(`\n💡 Remember to:`);
+	console.log(`   1. Add ${pascalName}Repository to InfrastructureProvider`);
+	console.log(`   2. Add ${pascalName}Service to ApplicationProvider`);
+	console.log(`   3. Use 'make:crud-presenter' to create the CRUD presenter`);
 }

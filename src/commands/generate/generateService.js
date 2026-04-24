@@ -24,48 +24,43 @@ const serviceWithoutRepoTemplate = `export class {{name}}Service {
 }`;
 
 export default async function generateService() {
-    const context = await selectContext('Select context for service:');
+	const context = await selectContext('Select context for service:');
 
-    const { name } = await prompts({
-        type: 'text',
-        name: 'name',
-        message: 'Service name (without "Service" suffix):'
-    });
+	const { name } = await prompts({
+		type: 'text',
+		name: 'name',
+		message: 'Service name (without "Service" suffix):'
+	});
 
-    // Get available repositories
-    const contextPath = getContextPath(context);
-    const repositories = await getAvailableFiles(
-        path.join(contextPath, 'infrastructure', 'http', 'repositories')
-    );
+	// Get available repositories
+	const contextPath = getContextPath(context);
+	const repositories = await getAvailableFiles(path.join(contextPath, 'infrastructure', 'http', 'repositories'));
 
-    const choices = [
-        { title: 'Without repository', value: null },
-        ...repositories.map(r => ({ title: `${r}`, value: r }))
-    ];
+	const choices = [{ title: 'Without repository', value: null }, ...repositories.map((r) => ({ title: `${r}`, value: r }))];
 
-    const { repository } = await prompts({
-        type: 'select',
-        name: 'repository',
-        message: 'Select repository:',
-        choices
-    });
+	const { repository } = await prompts({
+		type: 'select',
+		name: 'repository',
+		message: 'Select repository:',
+		choices
+	});
 
-    const pascalName = toPascalCase(name);
-    const servicePath = path.join(contextPath, 'application', 'services');
-    const filePath = path.join(servicePath, `${pascalName}Service.ts`);
+	const pascalName = toPascalCase(name);
+	const servicePath = path.join(contextPath, 'application', 'services');
+	const filePath = path.join(servicePath, `${pascalName}Service.ts`);
 
-    // Generate service
-    const content = repository
-        ? serviceTemplate
-            .replace(/{{name}}/g, pascalName)
-            .replace(/{{repository}}/g, repository)
-            .replace(/{{repositoryVar}}/g, repository.charAt(0).toLowerCase() + repository.slice(1))
-            .replace(/{{context}}/g, context)
-        : serviceWithoutRepoTemplate.replace(/{{name}}/g, pascalName);
+	// Generate service
+	const content = repository
+		? serviceTemplate
+				.replace(/{{name}}/g, pascalName)
+				.replace(/{{repository}}/g, repository)
+				.replace(/{{repositoryVar}}/g, repository.charAt(0).toLowerCase() + repository.slice(1))
+				.replace(/{{context}}/g, context)
+		: serviceWithoutRepoTemplate.replace(/{{name}}/g, pascalName);
 
-    await writeIfNotExists(filePath, content);
-    await updateIndexTs(servicePath);
+	await writeIfNotExists(filePath, content);
+	await updateIndexTs(servicePath);
 
-    console.log(`✅ Service created at ${filePath}`);
-    console.log(`\n💡 Remember to manually add this service to ApplicationProvider when needed.`);
+	console.log(`✅ Service created at ${filePath}`);
+	console.log(`\n💡 Remember to manually add this service to ApplicationProvider when needed.`);
 }

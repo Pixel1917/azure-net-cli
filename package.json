@@ -1,24 +1,31 @@
 {
-  "name": "@azure-net/cli",
-  "version": "2.3.63",
-  "type": "module",
-  "bin": {
-    "azure-net": "bin/azure-net.js"
-  },
-  "peerDependencies": {
-    "@azure-net/kit": "^2.1.5"
-  },
-  "dependencies": {
-    "@azure-net/kit": "^2.1.5",
-    "commander": "^11",
-    "prompts": "^2"
-  },
-  "devDependencies": {
-    "@types/node": "^24.0.3",
-    "typescript": "^5"
-  },
-  "scripts": {
-    "build": "tsc"
-  },
-  "packageManager": "pnpm@9.13.2+sha512.88c9c3864450350e65a33587ab801acf946d7c814ed1134da4a924f6df5a2120fd36b46aab68f7cd1d413149112d53c7db3a4136624cfd00ff1846a0c6cef48a"
+	"name": "@azure-net/cli",
+	"version": "4.0.0-0",
+	"type": "module",
+	"bin": {
+		"azure-net": "bin/azure-net.js"
+	},
+	"peerDependencies": {
+		"@azure-net/kit": "^4.0.0"
+	},
+	"dependencies": {
+		"commander": "^11",
+		"prompts": "^2"
+	},
+	"devDependencies": {
+		"@eslint/js": "^9.31.0",
+		"@types/node": "^24.0.3",
+		"@types/prompts": "^2.4.9",
+		"eslint": "^9.31.0",
+		"prettier": "^3.6.2",
+		"typescript": "^5",
+		"typescript-eslint": "^8.36.0"
+	},
+	"scripts": {
+		"build": "tsc -p tsconfig.json",
+		"typecheck": "tsc --noEmit -p tsconfig.json",
+		"lint": "eslint \"bin/**/*.ts\" \"src/**/*.ts\"",
+		"format": "prettier --write ."
+	},
+	"packageManager": "pnpm@9.13.2+sha512.88c9c3864450350e65a33587ab801acf946d7c814ed1134da4a924f6df5a2120fd36b46aab68f7cd1d413149112d53c7db3a4136624cfd00ff1846a0c6cef48a"
 }

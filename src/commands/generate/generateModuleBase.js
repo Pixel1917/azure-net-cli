@@ -1,13 +1,6 @@
 import prompts from 'prompts';
 import path from 'path';
-import {
-    selectContext,
-    getContextPath,
-    toPascalCase,
-    toCamelCase,
-    getAvailableFiles,
-    toKebabCase
-} from '../../utils/contextUtils.js';
+import { selectContext, getContextPath, toPascalCase, toCamelCase, getAvailableFiles, toKebabCase } from '../../utils/contextUtils.js';
 import { writeIfNotExists, updateIndexTs, updateCoreIndex } from '../../utils/fileUtils.js';
 
 const entityTemplate = `export interface I{{name}} {
@@ -43,110 +36,95 @@ export class {{name}}Service extends ClassMirror<{{name}}Repository> {
 }`;
 
 export default async function generateModuleBase() {
-    const context = await selectContext('Select context for module base:');
+	const context = await selectContext('Select context for module base:');
 
-    const { name } = await prompts({
-        type: 'text',
-        name: 'name',
-        message: 'Module name (PascalCase):'
-    });
+	const { name } = await prompts({
+		type: 'text',
+		name: 'name',
+		message: 'Module name (PascalCase):'
+	});
 
-    const { endpoint } = await prompts({
-        type: 'text',
-        name: 'endpoint',
-        message: 'API endpoint (e.g. /api/users):'
-    });
+	const { endpoint } = await prompts({
+		type: 'text',
+		name: 'endpoint',
+		message: 'API endpoint (e.g. /api/users):'
+	});
 
-    const { needEntity } = await prompts({
-        type: 'confirm',
-        name: 'needEntity',
-        message: 'Create domain entity?',
-        initial: true
-    });
+	const { needEntity } = await prompts({
+		type: 'confirm',
+		name: 'needEntity',
+		message: 'Create domain entity?',
+		initial: true
+	});
 
-    // Get available datasources
-    const contextPath = getContextPath(context);
-    const coreDatasources = await getAvailableFiles(
-        path.join(process.cwd(), 'src/core/datasources')
-    );
-    const contextDatasources = await getAvailableFiles(
-        path.join(contextPath, 'infrastructure/http/datasources')
-    );
+	// Get available datasources
+	const contextPath = getContextPath(context);
+	const coreDatasources = await getAvailableFiles(path.join(process.cwd(), 'src/core/datasources'));
+	const contextDatasources = await getAvailableFiles(path.join(contextPath, 'infrastructure/http/datasources'));
 
-    const allDatasources = [
-        ...coreDatasources.map(d => ({ title: `${d} (core)`, value: { name: d, from: 'core' } })),
-        ...contextDatasources.map(d => ({ title: `${d} (${context})`, value: { name: d, from: context } }))
-    ];
+	const allDatasources = [
+		...coreDatasources.map((d) => ({ title: `${d} (core)`, value: { name: d, from: 'core' } })),
+		...contextDatasources.map((d) => ({ title: `${d} (${context})`, value: { name: d, from: context } }))
+	];
 
-    const { datasource } = await prompts({
-        type: 'select',
-        name: 'datasource',
-        message: 'Select datasource:',
-        choices: allDatasources
-    });
+	const { datasource } = await prompts({
+		type: 'select',
+		name: 'datasource',
+		message: 'Select datasource:',
+		choices: allDatasources
+	});
 
-    const pascalName = toPascalCase(name);
-    const camelName = toCamelCase(name);
-    const entityLower = toKebabCase(pascalName);
+	const pascalName = toPascalCase(name);
+	const camelName = toCamelCase(name);
+	const entityLower = toKebabCase(pascalName);
 
-    console.log('\n🚀 Generating module base (repository & service)...\n');
+	console.log('\n🚀 Generating module base (repository & service)...\n');
 
-    // 1. Create Domain entity if needed
-    if (needEntity) {
-        const domainPath = path.join(contextPath, 'domain', entityLower);
-        const modelPath = path.join(domainPath, 'model');
+	// 1. Create Domain entity if needed
+	if (needEntity) {
+		const domainPath = path.join(contextPath, 'domain', entityLower);
+		const modelPath = path.join(domainPath, 'model');
 
-        await writeIfNotExists(
-            path.join(modelPath, `I${pascalName}.ts`),
-            entityTemplate.replace(/{{name}}/g, pascalName)
-        );
+		await writeIfNotExists(path.join(modelPath, `I${pascalName}.ts`), entityTemplate.replace(/{{name}}/g, pascalName));
 
-        await writeIfNotExists(
-            path.join(modelPath, 'index.ts'),
-            `export * from './I${pascalName}';`
-        );
+		await writeIfNotExists(path.join(modelPath, 'index.ts'), `export * from './I${pascalName}';`);
 
-        await writeIfNotExists(
-            path.join(domainPath, 'index.ts'),
-            `export * from './model';`
-        );
+		await writeIfNotExists(path.join(domainPath, 'index.ts'), `export * from './model';`);
 
-        console.log(`✅ Domain entity I${pascalName} created`);
-    }
+		console.log(`✅ Domain entity I${pascalName} created`);
+	}
 
-    // 2. Create Repository
-    const repoPath = path.join(contextPath, 'infrastructure/http/repositories');
-    const datasourceImport = datasource.from === 'core'
-        ? '$core/datasources'
-        : `\$${context}/infrastructure/http/datasources`;
+	// 2. Create Repository
+	const repoPath = path.join(contextPath, 'infrastructure/http/repositories');
+	const datasourceImport = datasource.from === 'core' ? '$core/datasources' : `\$${context}/infrastructure/http/datasources`;
 
-    await writeIfNotExists(
-        path.join(repoPath, `${pascalName}Repository.ts`),
-        repositoryTemplate
-            .replace(/{{name}}/g, pascalName)
-            .replace(/{{endpoint}}/g, endpoint)
-            .replace(/{{datasource}}/g, datasource.name)
-            .replace(/{{datasourceImport}}/g, datasourceImport)
-            .replace(/{{datasourceVar}}/g, toCamelCase(datasource.name))
-    );
-    await updateIndexTs(repoPath);
+	await writeIfNotExists(
+		path.join(repoPath, `${pascalName}Repository.ts`),
+		repositoryTemplate
+			.replace(/{{name}}/g, pascalName)
+			.replace(/{{endpoint}}/g, endpoint)
+			.replace(/{{datasource}}/g, datasource.name)
+			.replace(/{{datasourceImport}}/g, datasourceImport)
+			.replace(/{{datasourceVar}}/g, toCamelCase(datasource.name))
+	);
+	await updateIndexTs(repoPath);
 
-    // 3. Create Service
-    const servicePath = path.join(contextPath, 'application/services');
-    await writeIfNotExists(
-        path.join(servicePath, `${pascalName}Service.ts`),
-        serviceTemplate
-            .replace(/{{name}}/g, pascalName)
-            .replace(/{{camelName}}/g, camelName)
-            .replace(/{{context}}/g, context)
-    );
-    await updateIndexTs(servicePath);
+	// 3. Create Service
+	const servicePath = path.join(contextPath, 'application/services');
+	await writeIfNotExists(
+		path.join(servicePath, `${pascalName}Service.ts`),
+		serviceTemplate
+			.replace(/{{name}}/g, pascalName)
+			.replace(/{{camelName}}/g, camelName)
+			.replace(/{{context}}/g, context)
+	);
+	await updateIndexTs(servicePath);
 
-    // Update core index
-    await updateCoreIndex();
+	// Update core index
+	await updateCoreIndex();
 
-    console.log(`\n✅ Module base for ${pascalName} created successfully!`);
-    console.log(`\n💡 Remember to:`);
-    console.log(`   1. Add ${pascalName}Repository to InfrastructureProvider`);
-    console.log(`   2. Add ${pascalName}Service to ApplicationProvider`);
+	console.log(`\n✅ Module base for ${pascalName} created successfully!`);
+	console.log(`\n💡 Remember to:`);
+	console.log(`   1. Add ${pascalName}Repository to InfrastructureProvider`);
+	console.log(`   2. Add ${pascalName}Service to ApplicationProvider`);
 }

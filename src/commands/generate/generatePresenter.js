@@ -1,6 +1,6 @@
 import prompts from 'prompts';
 import path from 'path';
-import {selectContext, getContextPath, toPascalCase, getAvailableFiles, toKebabCase} from '../../utils/contextUtils.js';
+import { selectContext, getContextPath, toPascalCase, getAvailableFiles, toKebabCase } from '../../utils/contextUtils.js';
 import { writeIfNotExists, updateCoreIndex } from '../../utils/fileUtils.js';
 
 const presenterWithCoreTemplate = `import { {{corePresenter}} } from '$core/presenters';
@@ -32,55 +32,49 @@ export const {{name}}Presenter = createPresenter('{{name}}Presenter', () => {
 });`;
 
 export default async function generatePresenter() {
-    const context = await selectContext('Select context for presenter:');
+	const context = await selectContext('Select context for presenter:');
 
-    const { name } = await prompts({
-        type: 'text',
-        name: 'name',
-        message: 'Module name (will create folder in delivery):'
-    });
+	const { name } = await prompts({
+		type: 'text',
+		name: 'name',
+		message: 'Module name (will create folder in delivery):'
+	});
 
-    // Check for core presenters
-    const corePresenters = await getAvailableFiles(
-        path.join(process.cwd(), 'src/core/presenters')
-    );
+	// Check for core presenters
+	const corePresenters = await getAvailableFiles(path.join(process.cwd(), 'src/core/presenters'));
 
-    const presenterChoices = [
-        { title: 'Use createPresenter from package', value: 'package' },
-        ...corePresenters.map(p => ({ title: `Use ${p} from core`, value: p }))
-    ];
+	const presenterChoices = [
+		{ title: 'Use createPresenter from package', value: 'package' },
+		...corePresenters.map((p) => ({ title: `Use ${p} from core`, value: p }))
+	];
 
-    const { presenterType } = await prompts({
-        type: 'select',
-        name: 'presenterType',
-        message: 'Select presenter factory:',
-        choices: presenterChoices
-    });
+	const { presenterType } = await prompts({
+		type: 'select',
+		name: 'presenterType',
+		message: 'Select presenter factory:',
+		choices: presenterChoices
+	});
 
-    const pascalName = toPascalCase(name);
-    const moduleLower = toKebabCase(pascalName);
-    const contextPath = getContextPath(context);
-    const modulePath = path.join(contextPath, 'delivery', moduleLower);
-    const filePath = path.join(modulePath, `${pascalName}Presenter.ts`);
+	const pascalName = toPascalCase(name);
+	const moduleLower = toKebabCase(pascalName);
+	const contextPath = getContextPath(context);
+	const modulePath = path.join(contextPath, 'delivery', moduleLower);
+	const filePath = path.join(modulePath, `${pascalName}Presenter.ts`);
 
-    const content = presenterType === 'package'
-        ? presenterWithPackageTemplate
-            .replace(/{{name}}/g, pascalName)
-            .replace(/{{context}}/g, context)
-        : presenterWithCoreTemplate
-            .replace(/{{name}}/g, pascalName)
-            .replace(/{{corePresenter}}/g, presenterType)
-            .replace(/{{context}}/g, context);
+	const content =
+		presenterType === 'package'
+			? presenterWithPackageTemplate.replace(/{{name}}/g, pascalName).replace(/{{context}}/g, context)
+			: presenterWithCoreTemplate
+					.replace(/{{name}}/g, pascalName)
+					.replace(/{{corePresenter}}/g, presenterType)
+					.replace(/{{context}}/g, context);
 
-    await writeIfNotExists(filePath, content);
-    await writeIfNotExists(
-        path.join(modulePath, 'index.ts'),
-        `export * from './${pascalName}Presenter';`
-    );
+	await writeIfNotExists(filePath, content);
+	await writeIfNotExists(path.join(modulePath, 'index.ts'), `export * from './${pascalName}Presenter';`);
 
-    // Update core index
-    await updateCoreIndex();
+	// Update core index
+	await updateCoreIndex();
 
-    console.log(`✅ Presenter created at ${filePath}`);
-    console.log(`\n💡 Remember to extract needed services from ApplicationProvider in the presenter.`);
+	console.log(`✅ Presenter created at ${filePath}`);
+	console.log(`\n💡 Remember to extract needed services from ApplicationProvider in the presenter.`);
 }
