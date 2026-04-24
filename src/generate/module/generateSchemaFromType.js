@@ -186,9 +186,9 @@ const findInterfaceBodyByScan = async (rootDir, interfaceName) => {
 	return null;
 };
 
-const extractKeys = (body) => {
+const extractRuleKeys = (body) => {
 	const keys = [];
-	const keyRegex = /^\s*([A-Za-z_$][A-Za-z0-9_$]*)\??\s*:/gm;
+	const keyRegex = /^\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*:/gm;
 	let match;
 	while ((match = keyRegex.exec(body)) !== null) {
 		keys.push(match[1]);
@@ -196,14 +196,52 @@ const extractKeys = (body) => {
 	return Array.from(new Set(keys));
 };
 
-const updateRulesObject = (schemaContent, keys) => {
+const extractInterfaceFields = (body) => {
+	const fields = [];
+	const fieldRegex = /^\s*(?:readonly\s+)?([A-Za-z_$][A-Za-z0-9_$]*)(\?)?\s*:\s*([^;]+);/gm;
+	let match;
+	while ((match = fieldRegex.exec(body)) !== null) {
+		const name = match[1];
+		const optionalMark = match[2];
+		const type = String(match[3] ?? '').trim();
+		if (!name || !type) continue;
+		fields.push({
+			name,
+			optional: optionalMark === '?',
+			type
+		});
+	}
+
+	const unique = new Map();
+	for (const field of fields) {
+		if (!unique.has(field.name)) unique.set(field.name, field);
+	}
+	return Array.from(unique.values());
+};
+
+const buildRulesArray = (field) => {
+	const ruleCalls = [];
+	if (!field.optional) {
+		ruleCalls.push('rules.required()');
+	}
+
+	if (field.type === 'string') {
+		ruleCalls.push('rules.string()');
+	} else if (field.type === 'number') {
+		ruleCalls.push('rules.number()');
+	}
+
+	return `[${ruleCalls.join(', ')}]`;
+};
+
+const updateRulesObject = (schemaContent, fields) => {
 	const rulesRegex = /\.rules\(\(rules\)\s*=>\s*\(\{([\s\S]*?)\}\)\)/m;
 	const match = schemaContent.match(rulesRegex);
 	if (!match) return null;
 
 	const currentBody = match[1] ?? '';
-	const existingKeys = new Set(extractKeys(currentBody));
-	const newLines = keys.filter((key) => !existingKeys.has(key)).map((key) => `\t\t${key}: [],`);
+	const existingKeys = new Set(extractRuleKeys(currentBody));
+	const newLines = fields.filter((field) => !existingKeys.has(field.name)).map((field) => `\t\t${field.name}: ${buildRulesArray(field)},`);
 
 	if (!newLines.length) return schemaContent;
 
@@ -297,13 +335,13 @@ export default async function generateSchemaFromType() {
 		return;
 	}
 
-	const interfaceKeys = extractKeys(interfaceBody);
-	if (!interfaceKeys.length) {
+	const interfaceFields = extractInterfaceFields(interfaceBody);
+	if (!interfaceFields.length) {
 		console.log('ℹ️ Interface has no explicit keys to transfer into rules.');
 		return;
 	}
 
-	const updatedSchemaContent = updateRulesObject(schemaContent, interfaceKeys);
+	const updatedSchemaContent = updateRulesObject(schemaContent, interfaceFields);
 	if (!updatedSchemaContent) {
 		console.error('❌ Could not locate `.rules((rules) => ({}))` block in schema file.');
 		process.exitCode = 1;

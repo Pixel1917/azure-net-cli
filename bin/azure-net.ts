@@ -12,6 +12,7 @@ const createCommand = program.command('create').description('Create project boil
 const initCommand = program.command('init').description('Initialize project scaffolding');
 const installCommand = program.command('install').description('Install project presets and flows');
 const generateCommand = program.command('generate').description('Generate UI artifacts');
+const checkCommand = program.command('check').description('Run project checks');
 
 addCommand
 	.command('commit-tools')
@@ -90,16 +91,6 @@ createCommand
 		const handler = (await import('../src/scaffolds/createDatasourceProvider.js')).default;
 		await handler();
 	});
-
-const lazyCommand = (command: string, description: string, importer: () => Promise<(...args: unknown[]) => Promise<void> | void>) => {
-	program
-		.command(command)
-		.description(description)
-		.action(async (...args: unknown[]) => {
-			const handler = await importer();
-			await handler(...args);
-		});
-};
 
 initCommand
 	.command('edges')
@@ -226,28 +217,68 @@ generateCommand
 		await handler();
 	});
 
-lazyCommand('make:repo', 'Generate repository', async () => (await import('../src/commands/generate/generateRepository.js')).default);
-lazyCommand('make:service', 'Generate service', async () => (await import('../src/commands/generate/generateService.js')).default);
-lazyCommand('make:schema', 'Generate schema', async () => (await import('../src/commands/generate/generateSchema.js')).default);
-lazyCommand('make:presenter', 'Generate presenter', async () => (await import('../src/commands/generate/generatePresenter.js')).default);
-lazyCommand(
-	'make:crud-base',
-	'Generate CRUD repository and service',
-	async () => (await import('../src/commands/generate/generateCrudBase.js')).default
-);
-lazyCommand(
-	'make:crud-presenter',
-	'Generate CRUD presenter for existing service',
-	async () => (await import('../src/commands/generate/generateCrudPresenter.js')).default
-);
-lazyCommand(
-	'make:module-base',
-	'Generate repository and service for a module',
-	async () => (await import('../src/commands/generate/generateModuleBase.js')).default
-);
-lazyCommand(
-	'make:module-presenter',
-	'Generate presenter for existing service',
-	async () => (await import('../src/commands/generate/generateModulePresenter.js')).default
-);
+generateCommand
+	.command('module-preset')
+	.description('Generate preset CRUD-like module flow')
+	.action(async () => {
+		const handler = (await import('../src/generate/module/generateModulePreset.js')).default;
+		await handler();
+	});
+
+checkCommand
+	.command('presenter-names')
+	.description('Check duplicate presenter names in src')
+	.action(async () => {
+		const handler = (await import('../src/checks/checkPresenterNames.js')).default;
+		await handler();
+	});
+
+checkCommand
+	.command('provider-names')
+	.description('Check duplicate provider names in src')
+	.action(async () => {
+		const handler = (await import('../src/checks/checkProviderNames.js')).default;
+		await handler();
+	});
+
+checkCommand
+	.command('domain')
+	.description('Check domain naming and structure rules in all contexts')
+	.action(async () => {
+		const handler = (await import('../src/checks/checkDomain.js')).default;
+		await handler();
+	});
+
+checkCommand
+	.command('layer-boundaries')
+	.description('Check layer boundaries between contexts by aliases')
+	.action(async () => {
+		const handler = (await import('../src/checks/checkLayerBoundaries.js')).default;
+		await handler();
+	});
+
+checkCommand
+	.command('folders-structure')
+	.description('Check allowed folders structure in context layers/ui/components')
+	.action(async () => {
+		const handler = (await import('../src/checks/checkFoldersStructure.js')).default;
+		await handler();
+	});
+
+checkCommand
+	.command('internal')
+	.description('Run all internal azure-net checks')
+	.action(async () => {
+		const handler = (await import('../src/checks/checkInternal.js')).default;
+		await handler();
+	});
+
+checkCommand
+	.command('project')
+	.description('Run full project checks: format, internal, lint, typecheck')
+	.action(async () => {
+		const handler = (await import('../src/checks/checkProject.js')).default;
+		await handler();
+	});
+
 program.parse();

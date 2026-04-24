@@ -15,5 +15,20 @@ export default tseslint.config(
 				process: 'readonly'
 			}
 		}
+	},
+	{
+		files: [
+			'src/generate/module/repositoryModuleShared.ts',
+			'src/generate/layers/repositoryShared.ts',
+			'src/generate/layers/generateUseCases.ts',
+			'src/generate/layers/generateRepositoryMethod.ts',
+			'src/generate/layers/generateRepository.ts',
+			'src/utils/contextUtils.ts',
+			'src/utils/loadConfig.ts',
+			'src/utils/fileUtils.ts'
+		],
+		rules: {
+			'@typescript-eslint/ban-ts-comment': 'off'
+		}
 	}
 );
