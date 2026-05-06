@@ -5,7 +5,7 @@ import { addLint } from '../src/plugins/index.js';
 
 const program = new Command();
 
-program.name('azure-net').description('Azure-Net CLI generator').version('4.0.0');
+program.name('azure-net').description('Azure-Net CLI generator').version('4.1.0');
 
 const addCommand = program.command('add').description('Add project integrations and plugins');
 const createCommand = program.command('create').description('Create project boilerplate artifacts');

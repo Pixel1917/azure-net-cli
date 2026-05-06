@@ -4,26 +4,24 @@ import checkProviderGraph from './checkProviderGraph.js';
 import checkDomain from './checkDomain.js';
 import checkLayerBoundaries from './checkLayerBoundaries.js';
 import checkFoldersStructure from './checkFoldersStructure.js';
-
+import checkImports from './checkImports.js';
 const tasks = [
 	{ name: 'presenter-names', run: checkPresenterNames },
 	{ name: 'provider-names', run: checkProviderNames },
 	{ name: 'provider-graph', run: checkProviderGraph },
 	{ name: 'domain', run: checkDomain },
+	{ name: 'imports', run: checkImports },
 	{ name: 'layer-boundaries', run: checkLayerBoundaries },
 	{ name: 'folders-structure', run: checkFoldersStructure }
 ];
-
 const runTask = async (task) => {
 	console.log(`\n▶ Running check ${task.name}...`);
 	process.exitCode = 0;
 	await task.run();
-
 	if ((process.exitCode ?? 0) !== 0) {
 		throw new Error(`Check "${task.name}" failed`);
 	}
 };
-
 export default async function checkInternal() {
 	try {
 		for (const task of tasks) {
@@ -35,3 +33,4 @@ export default async function checkInternal() {
 		process.exitCode = 1;
 	}
 }
+//# sourceMappingURL=checkInternal.js.map

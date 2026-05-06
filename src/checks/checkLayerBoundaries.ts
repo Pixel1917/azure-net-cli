@@ -99,6 +99,22 @@ const resolveAliasFromImport = (importPath: string, aliases: string[]): string |
 	return null;
 };
 
+const resolveContextFromRelativeImport = (filePath: string, importPath: string, contexts: ContextConfig[]): ContextConfig | null => {
+	if (!importPath.startsWith('.')) return null;
+
+	const absoluteImportPath = path.resolve(path.dirname(filePath), importPath);
+	const appRoot = path.join(process.cwd(), 'src', 'app');
+
+	for (const context of contexts) {
+		const contextRoot = path.join(appRoot, context.name);
+		if (absoluteImportPath === contextRoot || absoluteImportPath.startsWith(`${contextRoot}${path.sep}`)) {
+			return context;
+		}
+	}
+
+	return null;
+};
+
 const isSharedLikeContext = (contextName: string, alias: string): boolean => {
 	const normalizedName = contextName.toLowerCase();
 	const normalizedAlias = alias.toLowerCase();
@@ -141,16 +157,25 @@ export default async function checkLayerBoundaries(): Promise<void> {
 
 			for (const entry of imports) {
 				const targetAlias = resolveAliasFromImport(entry.value, knownAliases);
-				if (!targetAlias || targetAlias === coreAlias) continue;
-				if (!aliasToContext.has(targetAlias)) continue;
+				if (targetAlias && targetAlias !== coreAlias) {
+					const targetContext = aliasToContext.get(targetAlias);
+					issues.push({
+						file: filePath,
+						line: entry.line,
+						message: targetContext
+							? `Layer boundary violation: core cannot import from context "${targetContext.name}" (${targetAlias})`
+							: `Layer boundary violation: core cannot import from "${targetAlias}"`
+					});
+					continue;
+				}
 
-				const targetContext = aliasToContext.get(targetAlias);
+				const relativeTargetContext = resolveContextFromRelativeImport(filePath, entry.value, contexts);
+				if (!relativeTargetContext) continue;
+
 				issues.push({
 					file: filePath,
 					line: entry.line,
-					message: targetContext
-						? `Layer boundary violation: core cannot import from context "${targetContext.name}" (${targetAlias})`
-						: `Layer boundary violation: core cannot import from "${targetAlias}"`
+					message: `Layer boundary violation: core cannot import from context "${relativeTargetContext.name}" via relative path`
 				});
 			}
 		}
@@ -190,6 +215,23 @@ export default async function checkLayerBoundaries(): Promise<void> {
 
 				const withSharedHint =
 					!sharedAlias && targetContext && isSharedLikeContext(targetContext.name, targetAlias)
+						? `${baseMessage}. sharedAlias is not configured in azure-net.config.ts/js; if this context is shared, set sharedAlias explicitly`
+						: baseMessage;
+
+				issues.push({
+					file: filePath,
+					line: entry.line,
+					message: withSharedHint
+				});
+			}
+
+			for (const entry of imports) {
+				const relativeTargetContext = resolveContextFromRelativeImport(filePath, entry.value, contexts);
+				if (!relativeTargetContext || relativeTargetContext.name === context.name) continue;
+
+				const baseMessage = `Layer boundary violation: context "${context.name}" cannot import from context "${relativeTargetContext.name}" via relative path`;
+				const withSharedHint =
+					!sharedAlias && isSharedLikeContext(relativeTargetContext.name, relativeTargetContext.alias)
 						? `${baseMessage}. sharedAlias is not configured in azure-net.config.ts/js; if this context is shared, set sharedAlias explicitly`
 						: baseMessage;
 

@@ -5,7 +5,7 @@ import { addLint } from '../src/plugins/index.js';
 
 const program = new Command();
 
-program.name('azure-net').description('Azure-Net CLI generator').version('2.1.0');
+program.name('azure-net').description('Azure-Net CLI generator').version('4.1.0');
 
 const addCommand = program.command('add').description('Add project integrations and plugins');
 const createCommand = program.command('create').description('Create project boilerplate artifacts');
@@ -254,6 +254,14 @@ checkCommand
 	.description('Check domain naming and structure rules in all contexts')
 	.action(async () => {
 		const handler = (await import('../src/checks/checkDomain.js')).default;
+		await handler();
+	});
+
+checkCommand
+	.command('imports')
+	.description('Check import extensions and import group order in src')
+	.action(async () => {
+		const handler = (await import('../src/checks/checkImports.js')).default;
 		await handler();
 	});
 
