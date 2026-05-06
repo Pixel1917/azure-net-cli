@@ -564,7 +564,7 @@ export const writeRepositoryInterface = async ({
 		.join('\n');
 
 	const content = `${imports.join('\n')}${imports.length ? '\n\n' : ''}export interface ${meta.repositoryInterfaceName} {\n${signatures ? `${signatures}\n` : ''}}\n`;
-	await fs.writeFile(path.join(portsPath, `${meta.repositoryInterfaceName}.ts`), content, 'utf-8');
+	await fs.writeFile(path.join(portsPath, `${toTypeFileName(meta.repositoryInterfaceName)}.ts`), content, 'utf-8');
 	await updateIndexTs(portsPath);
 };
 
@@ -598,7 +598,11 @@ export const createUseCasesForRepository = async ({
 	repositoryName: string;
 }): Promise<boolean> => {
 	const meta = getRepositoryMeta(repositoryName);
-	const interfacePath = path.join(resolveDomainRootPath(contextName, domainName), 'ports', `${meta.repositoryInterfaceName}.ts`);
+	const interfacePath = path.join(
+		resolveDomainRootPath(contextName, domainName),
+		'ports',
+		`${toTypeFileName(meta.repositoryInterfaceName)}.ts`
+	);
 
 	let interfaceContent = '';
 	try {

@@ -36,7 +36,7 @@ export default async function checkProject(): Promise<void> {
 		runScript(manager, 'format');
 		await runInternalChecks();
 		runScript(manager, 'lint');
-		runScript(manager, 'typecheck');
+		runScript(manager, 'check');
 		console.log('\n✅ Project checks passed.');
 	} catch (error) {
 		console.error(`\n❌ Project checks failed: ${error instanceof Error ? error.message : String(error)}`);

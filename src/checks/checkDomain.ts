@@ -49,6 +49,8 @@ const isEnumsPath = (filePath: string): boolean => {
 
 const isIndexFile = (filePath: string): boolean => path.basename(filePath) === 'index.ts';
 
+const startsWithInterfacePrefix = (filePath: string): boolean => /^I[A-Z]/.test(path.basename(filePath, '.ts'));
+
 const isExportOnlyIndex = (content: string): boolean => {
 	const withoutComments = stripComments(content);
 	const withoutExports = stripExportStatements(withoutComments);
@@ -142,6 +144,14 @@ const collectIssuesForFile = (filePath: string, content: string): DomainIssue[] 
 
 	if (isEnumsPath(filePath)) {
 		return issues;
+	}
+
+	if (!isIndexFile(filePath) && startsWithInterfacePrefix(filePath)) {
+		issues.push({
+			file: filePath,
+			line: 1,
+			message: 'Domain file names must not start with "I". Keep "I" only in interface/type names'
+		});
 	}
 
 	const declarations = extractDeclarations(content);

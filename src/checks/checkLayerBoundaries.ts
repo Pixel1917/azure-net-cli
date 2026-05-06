@@ -131,18 +131,45 @@ export default async function checkLayerBoundaries(): Promise<void> {
 
 	const issues: BoundaryIssue[] = [];
 
+	const coreRoot = path.join(process.cwd(), 'src', 'core');
+	try {
+		await fs.access(coreRoot);
+		const coreFiles = await listFiles(coreRoot);
+		for (const filePath of coreFiles) {
+			const content = await fs.readFile(filePath, 'utf-8');
+			const imports = extractImports(content);
+
+			for (const entry of imports) {
+				const targetAlias = resolveAliasFromImport(entry.value, knownAliases);
+				if (!targetAlias || targetAlias === coreAlias) continue;
+				if (!aliasToContext.has(targetAlias)) continue;
+
+				const targetContext = aliasToContext.get(targetAlias);
+				issues.push({
+					file: filePath,
+					line: entry.line,
+					message: targetContext
+						? `Layer boundary violation: core cannot import from context "${targetContext.name}" (${targetAlias})`
+						: `Layer boundary violation: core cannot import from "${targetAlias}"`
+				});
+			}
+		}
+	} catch {
+		// Core folder is optional for the check.
+	}
+
 	for (const context of contexts) {
-		const layersRoot = path.join(process.cwd(), 'src', 'app', context.name, 'layers');
+		const contextRoot = path.join(process.cwd(), 'src', 'app', context.name);
 
 		try {
-			await fs.access(layersRoot);
+			await fs.access(contextRoot);
 		} catch {
 			continue;
 		}
 
-		const files = await listFiles(layersRoot);
+		const files = await listFiles(contextRoot);
 		const allowedAliases = new Set<string>([context.alias, coreAlias]);
-		if (sharedAlias) {
+		if (sharedAlias && context.alias !== sharedAlias) {
 			allowedAliases.add(sharedAlias);
 		}
 

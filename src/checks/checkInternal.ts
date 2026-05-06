@@ -1,8 +1,10 @@
 import checkPresenterNames from './checkPresenterNames.js';
 import checkProviderNames from './checkProviderNames.js';
+import checkProviderGraph from './checkProviderGraph.js';
 import checkDomain from './checkDomain.js';
 import checkLayerBoundaries from './checkLayerBoundaries.js';
 import checkFoldersStructure from './checkFoldersStructure.js';
+import checkImports from './checkImports.js';
 
 type CheckTask = {
 	name: string;
@@ -12,7 +14,9 @@ type CheckTask = {
 const tasks: CheckTask[] = [
 	{ name: 'presenter-names', run: checkPresenterNames },
 	{ name: 'provider-names', run: checkProviderNames },
+	{ name: 'provider-graph', run: checkProviderGraph },
 	{ name: 'domain', run: checkDomain },
+	{ name: 'imports', run: checkImports },
 	{ name: 'layer-boundaries', run: checkLayerBoundaries },
 	{ name: 'folders-structure', run: checkFoldersStructure }
 ];

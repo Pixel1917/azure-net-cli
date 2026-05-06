@@ -242,10 +242,26 @@ checkCommand
 	});
 
 checkCommand
+	.command('provider-graph')
+	.description('Check provider dependency graph for cycles')
+	.action(async () => {
+		const handler = (await import('../src/checks/checkProviderGraph.js')).default;
+		await handler();
+	});
+
+checkCommand
 	.command('domain')
 	.description('Check domain naming and structure rules in all contexts')
 	.action(async () => {
 		const handler = (await import('../src/checks/checkDomain.js')).default;
+		await handler();
+	});
+
+checkCommand
+	.command('imports')
+	.description('Check import extensions and import group order in src')
+	.action(async () => {
+		const handler = (await import('../src/checks/checkImports.js')).default;
 		await handler();
 	});
 

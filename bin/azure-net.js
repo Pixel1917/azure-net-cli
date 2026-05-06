@@ -242,6 +242,14 @@ checkCommand
 	});
 
 checkCommand
+	.command('provider-graph')
+	.description('Check provider dependency graph for cycles')
+	.action(async () => {
+		const handler = (await import('../src/checks/checkProviderGraph.js')).default;
+		await handler();
+	});
+
+checkCommand
 	.command('domain')
 	.description('Check domain naming and structure rules in all contexts')
 	.action(async () => {
