@@ -5,12 +5,14 @@ import checkDomain from './checkDomain.js';
 import checkLayerBoundaries from './checkLayerBoundaries.js';
 import checkFoldersStructure from './checkFoldersStructure.js';
 import checkImports from './checkImports.js';
+import checkHooks from './checkHooks.js';
 const tasks = [
 	{ name: 'presenter-names', run: checkPresenterNames },
 	{ name: 'provider-names', run: checkProviderNames },
 	{ name: 'provider-graph', run: checkProviderGraph },
 	{ name: 'domain', run: checkDomain },
 	{ name: 'imports', run: checkImports },
+	{ name: 'hooks', run: checkHooks },
 	{ name: 'layer-boundaries', run: checkLayerBoundaries },
 	{ name: 'folders-structure', run: checkFoldersStructure }
 ];

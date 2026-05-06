@@ -5,12 +5,11 @@ import initStructure from '../init/initStructure.js';
 import { normalizeContexts } from '../init/initAliases.js';
 import { loadUserConfig } from '../utils/loadConfig.js';
 import {
-	createCoreMiddleware,
 	createCoreSchema,
 	createDatasource,
 	createDatasourceProvider,
-	createMiddleware,
 	createPresenterFactory,
+	createProgram,
 	createResponse,
 	createTranslationManager
 } from '../scaffolds/index.js';
@@ -60,17 +59,10 @@ export default async function installFresh() {
 
 	await initStructure();
 	await initEdges();
+	await createProgram();
 
 	await runOptionalStep('Add commit tools (lint/commit conventions)?', async () => {
 		await addLint();
-	});
-
-	await runOptionalStep('Create middleware manager?', async () => {
-		await createCoreMiddleware();
-	});
-
-	await runOptionalStep('Create starter middleware?', async () => {
-		await createMiddleware();
 	});
 
 	await runOptionalStep('Create schema factory?', async () => {

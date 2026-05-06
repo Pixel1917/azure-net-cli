@@ -29,14 +29,6 @@ createCommand
 	});
 
 createCommand
-	.command('middleware-manager')
-	.description('Create middleware manager in src/core/middleware-manager')
-	.action(async () => {
-		const handler = (await import('../src/scaffolds/createCoreMiddleware.js')).default;
-		await handler();
-	});
-
-createCommand
 	.command('translation-manager')
 	.description('Create translation manager in src/core/translation')
 	.action(async () => {
@@ -57,14 +49,6 @@ createCommand
 	.description('Create schema rule in src/core/schema/custom-rules')
 	.action(async () => {
 		const handler = (await import('../src/scaffolds/createSchemaRule.js')).default;
-		await handler();
-	});
-
-createCommand
-	.command('middleware')
-	.description('Create middleware in src/core/middleware-manager/middlewares')
-	.action(async () => {
-		const handler = (await import('../src/scaffolds/createMiddleware.js')).default;
 		await handler();
 	});
 
@@ -262,6 +246,14 @@ checkCommand
 	.description('Check import extensions and import group order in src')
 	.action(async () => {
 		const handler = (await import('../src/checks/checkImports.js')).default;
+		await handler();
+	});
+
+checkCommand
+	.command('hooks')
+	.description('Check that manual SvelteKit hooks are not present')
+	.action(async () => {
+		const handler = (await import('../src/checks/checkHooks.js')).default;
 		await handler();
 	});
 
