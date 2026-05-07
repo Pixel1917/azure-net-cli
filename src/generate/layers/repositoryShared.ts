@@ -5,6 +5,7 @@ import { loadUserConfig } from '../../utils/loadConfig.js';
 import { normalizeContexts } from '../../init/initAliases.js';
 import { toCamelCase, toKebabCase, toPascalCase } from '../../utils/contextUtils.js';
 import { updateIndexTs, writeIfNotExists } from '../../utils/fileUtils.js';
+import { getFoundationConstructImportPath, getFoundationConstructPath, getSharedState } from '../../utils/sharedFoundation.js';
 
 type ContextConfig = { name: string; alias: string };
 type DomainLayer = 'ports' | 'model';
@@ -17,7 +18,7 @@ type RepositoryMeta = {
 	useCasesClassName: string;
 	repositoryDependencyName: string;
 };
-type DatasourceInfo = { name: string; source: 'core' | 'context'; importPath: string };
+type DatasourceInfo = { name: string; source: 'shared' | 'context'; importPath: string };
 type RepositoryMethod = {
 	name: string;
 	httpMethod: HttpMethod;
@@ -131,14 +132,15 @@ export const getRepositoryMeta = (repositoryClassName: unknown): RepositoryMeta 
 	};
 };
 
-export const getConfigState = async (): Promise<{ contexts: ContextConfig[]; coreAlias: string }> => {
+export const getConfigState = async (): Promise<{ contexts: ContextConfig[]; sharedAlias: string; sharedContextName: string }> => {
 	const config = await loadUserConfig();
 	const contexts = normalizeContexts(config.contexts);
-	const coreAlias = normalizeAlias(config.coreAlias, '$core');
+	const { sharedAlias, sharedContext } = await getSharedState();
 
 	return {
 		contexts,
-		coreAlias
+		sharedAlias,
+		sharedContextName: sharedContext.name
 	};
 };
 
@@ -172,7 +174,10 @@ export const resolveRepositoriesPath = (contextName: string): string =>
 export const resolveDatasourcesPath = (contextName: string): string =>
 	path.join(process.cwd(), 'src', 'app', contextName, 'layers', 'infrastructure', 'http', 'datasources');
 
-export const resolveCoreDatasourcesPath = (): string => path.join(process.cwd(), 'src', 'core', 'datasource');
+export const resolveSharedDatasourcesPath = async (): Promise<string> => {
+	const { sharedContext } = await getSharedState();
+	return getFoundationConstructPath(sharedContext.name, 'datasource');
+};
 
 export const resolveDomainRootPath = (contextName: string, domainName: string): string =>
 	path.join(process.cwd(), 'src', 'app', contextName, 'layers', 'domain', domainName);
@@ -190,19 +195,19 @@ export const getAvailableTsNames = async (targetPath: string): Promise<string[]>
 };
 
 export const selectDatasource = async (contextName: string): Promise<DatasourceInfo | null> => {
-	const { contexts, coreAlias } = await getConfigState();
+	const { contexts, sharedAlias } = await getConfigState();
 	const contextAlias = resolveContextAlias(contexts, contextName);
-	const coreDatasources = await getAvailableTsNames(resolveCoreDatasourcesPath());
+	const sharedDatasources = await getAvailableTsNames(await resolveSharedDatasourcesPath());
 	const contextDatasources = await getAvailableTsNames(resolveDatasourcesPath(contextName));
 
 	const choices: Array<{ title: string; value: DatasourceInfo }> = [];
-	for (const datasource of coreDatasources) {
+	for (const datasource of sharedDatasources) {
 		choices.push({
-			title: `${datasource} (core)`,
+			title: `${datasource} (shared foundation)`,
 			value: {
 				name: datasource,
-				source: 'core',
-				importPath: `${coreAlias}/datasource`
+				source: 'shared',
+				importPath: getFoundationConstructImportPath(sharedAlias, 'datasource')
 			}
 		});
 	}
@@ -219,7 +224,7 @@ export const selectDatasource = async (contextName: string): Promise<DatasourceI
 	}
 
 	if (!choices.length) {
-		console.error(`❌ No datasources found in core or context "${contextName}".`);
+		console.error(`❌ No datasources found in shared foundation or context "${contextName}".`);
 		return null;
 	}
 

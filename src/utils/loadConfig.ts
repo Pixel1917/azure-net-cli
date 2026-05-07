@@ -5,7 +5,6 @@ import path from 'node:path';
 export type AzureNetConfig = {
 	contexts: Array<string | { name?: string; alias?: string }>;
 	defaultContext: string;
-	coreAlias: string;
 	sharedAlias?: string;
 	packageManager?: string;
 	defaultSchemaFactory?: string;
@@ -15,8 +14,7 @@ export type AzureNetConfig = {
 
 const DEFAULT_CONFIG: AzureNetConfig = {
 	contexts: [],
-	defaultContext: 'web',
-	coreAlias: '$core'
+	defaultContext: 'web'
 };
 
 function toObjectFromDefaultExport(content: string): Record<string, unknown> {

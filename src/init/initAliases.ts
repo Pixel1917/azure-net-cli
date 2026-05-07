@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { loadUserConfig, resolveConfigFile } from '../utils/loadConfig.js';
+import { loadUserConfig } from '../utils/loadConfig.js';
 
 const svelteConfigPath = path.resolve('svelte.config.js');
 
@@ -37,12 +37,10 @@ export function normalizeContexts(rawContexts: unknown): ContextConfig[] {
 		.filter((item): item is ContextConfig => item !== null);
 }
 
-export function generateAliases(config: { coreAlias?: string; contexts?: unknown }): {
-	coreAlias: string;
+export function generateAliases(config: { contexts?: unknown }): {
 	contexts: ContextConfig[];
 	aliases: Record<string, string>;
 } {
-	const coreAlias = normalizeAliasValue(config.coreAlias, 'core');
 	const contexts = normalizeContexts(config.contexts);
 
 	const entries: Array<[string, string]> = [];
@@ -50,10 +48,7 @@ export function generateAliases(config: { coreAlias?: string; contexts?: unknown
 		entries.push([context.alias, `./src/app/${context.name}`]);
 	}
 
-	entries.push([coreAlias, './src/core']);
-
 	return {
-		coreAlias,
 		contexts,
 		aliases: Object.fromEntries(entries)
 	};
@@ -84,6 +79,36 @@ function buildAliasEntriesString(orderedKeys: string[], map: Map<string, string>
 	return orderedKeys.map((key) => `${baseIndent}'${key}': '${map.get(key) ?? ''}'`).join(',\n');
 }
 
+function removeAliasEntry(content: string, alias: string): string {
+	const escapedAlias = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	const aliasRegex = new RegExp(`\\n?\\s*['"\`]${escapedAlias}['"\`]\\s*:\\s*['"\`][^'"\`]+['"\`]\\s*,?`, 'g');
+	return content.replace(aliasRegex, '');
+}
+
+const removeCoreAliasFromAzureNetConfig = async (): Promise<void> => {
+	const tsPath = path.resolve('azure-net.config.ts');
+	const jsPath = path.resolve('azure-net.config.js');
+	let filepath: string | null = null;
+
+	try {
+		await fs.access(tsPath);
+		filepath = tsPath;
+	} catch {
+		try {
+			await fs.access(jsPath);
+			filepath = jsPath;
+		} catch {
+			return;
+		}
+	}
+
+	const content = await fs.readFile(filepath, 'utf-8');
+	if (!/coreAlias\s*:/.test(content)) return;
+
+	const nextContent = content.replace(/\n?\s*coreAlias\s*:\s*['"`][^'"`]+['"`]\s*,?/m, '').replace(/,\s*\n\s*\}/m, '\n}');
+	await fs.writeFile(filepath, nextContent, 'utf-8');
+};
+
 export function mergeAliasesInSvelteConfig(content: string, aliases: Record<string, string>): string {
 	const aliasRegex = /alias\s*:\s*\{([\s\S]*?)\}/m;
 	const aliasMatch = content.match(aliasRegex);
@@ -91,14 +116,16 @@ export function mergeAliasesInSvelteConfig(content: string, aliases: Record<stri
 	if (aliasMatch) {
 		const aliasBody = aliasMatch[1] ?? '';
 		const { ordered, map } = parseAliasEntries(aliasBody);
+		map.delete('$core');
 		for (const [key, value] of Object.entries(aliases)) {
 			if (!map.has(key)) ordered.push(key);
 			map.set(key, value);
 		}
+		const nextOrdered = ordered.filter((key) => key !== '$core');
 
 		const baseIndentMatch = aliasBody.match(/\n(\s*)['"`]/);
 		const baseIndent = baseIndentMatch?.[1] ?? '\t\t\t';
-		const merged = buildAliasEntriesString(ordered, map, baseIndent);
+		const merged = buildAliasEntriesString(nextOrdered, map, baseIndent);
 		const nextAliasBlock = `alias: {\n${merged}\n\t\t}`;
 		return content.replace(aliasRegex, nextAliasBlock);
 	}
@@ -117,41 +144,19 @@ export function mergeAliasesInSvelteConfig(content: string, aliases: Record<stri
 		.join(',\n')}\n};\n`;
 }
 
-function upsertCoreAlias(content: string, coreAlias: string): string {
-	const exportDefaultRegex = /export\s+default\s*\{([\s\S]*)\}\s*;?/m;
-	if (!exportDefaultRegex.test(content)) {
-		return `export default {\n\tcoreAlias: '${coreAlias}'\n};\n`;
-	}
-
-	if (/coreAlias\s*:/.test(content)) {
-		return content.replace(/coreAlias\s*:\s*['"`][^'"`]+['"`]/, `coreAlias: '${coreAlias}'`);
-	}
-
-	return content.replace(exportDefaultRegex, (_full, body: string) => {
-		const trimmed = body.replace(/\s*$/, '');
-		if (!trimmed.length) {
-			return `export default {\n\tcoreAlias: '${coreAlias}'\n};`;
-		}
-
-		const withComma = trimmed.endsWith(',') ? trimmed : `${trimmed},`;
-		return `export default {${withComma}\n\tcoreAlias: '${coreAlias}'\n};`;
-	});
-}
-
-export async function ensureCoreAliasInConfig(coreAlias: string): Promise<string> {
-	const { exists, filepath } = resolveConfigFile();
-	const aliasToSave = normalizeAliasValue(coreAlias, 'core');
-	const currentContent = exists ? await fs.readFile(filepath, 'utf-8') : '';
-	const nextContent = upsertCoreAlias(currentContent, aliasToSave);
-	await fs.writeFile(filepath, nextContent, 'utf-8');
-	return aliasToSave;
-}
-
 export default async function initAliases(): Promise<void> {
 	const config = await loadUserConfig();
-	const generated = generateAliases(config as { coreAlias?: string; contexts?: unknown });
-	const actualCoreAlias = await ensureCoreAliasInConfig(generated.coreAlias);
-	const aliases = { ...generated.aliases, [actualCoreAlias]: './src/core' };
+	const sharedAlias = String(config.sharedAlias ?? '').trim();
+	if (!sharedAlias.length) {
+		console.error('❌ Cannot update aliases: `sharedAlias` is missing in azure-net.config.ts/js.');
+		console.error("Add it first, for example: sharedAlias: '$shared-kernel'");
+		process.exitCode = 1;
+		return;
+	}
+
+	const generated = generateAliases(config as { contexts?: unknown });
+	const aliases = generated.aliases;
+	await removeCoreAliasFromAzureNetConfig();
 
 	let content: string;
 	try {
@@ -161,7 +166,7 @@ export default async function initAliases(): Promise<void> {
 		return;
 	}
 
-	const nextContent = mergeAliasesInSvelteConfig(content, aliases);
+	const nextContent = removeAliasEntry(mergeAliasesInSvelteConfig(content, aliases), '$core');
 	await fs.writeFile(svelteConfigPath, nextContent, 'utf-8');
 	console.log('✅ Aliases updated in svelte.config.js');
 }

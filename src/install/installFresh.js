@@ -13,7 +13,6 @@ import {
 	createResponse,
 	createTranslationManager
 } from '../scaffolds/index.js';
-
 const printContextsError = () => {
 	console.error('❌ Cannot run "install fresh": `contexts` is missing or empty in azure-net.config.ts/js');
 	console.error('Add contexts first, for example:');
@@ -23,7 +22,6 @@ const printContextsError = () => {
 	console.error("\t// contexts: [{ name: 'web', alias: '$web' }, { name: 'admin', alias: '$admin' }]");
 	console.error('};');
 };
-
 const askConfirm = async (message) => {
 	const result = await prompts({
 		type: 'confirm',
@@ -31,14 +29,11 @@ const askConfirm = async (message) => {
 		message,
 		initial: true
 	});
-
 	return Boolean(result.confirmed);
 };
-
 const runOptionalStep = async (question, action) => {
 	const shouldRun = await askConfirm(question);
 	if (!shouldRun) return;
-
 	try {
 		await action();
 	} catch (error) {
@@ -46,48 +41,37 @@ const runOptionalStep = async (question, action) => {
 		console.warn(error);
 	}
 };
-
 export default async function installFresh() {
 	const config = await loadUserConfig();
 	const contexts = normalizeContexts(config.contexts);
-
 	if (!contexts.length) {
 		printContextsError();
 		process.exitCode = 1;
 		return;
 	}
-
 	await initStructure();
 	await initEdges();
 	await createProgram();
-
 	await runOptionalStep('Add commit tools (lint/commit conventions)?', async () => {
 		await addLint();
 	});
-
 	await runOptionalStep('Create schema factory?', async () => {
 		await createCoreSchema();
 	});
-
 	await runOptionalStep('Create presenter factory?', async () => {
 		await createPresenterFactory();
 	});
-
 	await runOptionalStep('Create API response?', async () => {
 		await createResponse();
 	});
-
 	await runOptionalStep('Create datasource?', async () => {
 		await createDatasource();
 	});
-
 	await runOptionalStep('Create datasource provider?', async () => {
 		await createDatasourceProvider();
 	});
-
 	await runOptionalStep('Create translation manager (i18n)?', async () => {
 		await createTranslationManager();
 	});
-
 	console.log('✅ install fresh completed');
 }

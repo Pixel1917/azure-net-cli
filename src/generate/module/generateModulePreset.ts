@@ -11,13 +11,14 @@ import {
 	getConfigState,
 	getRepositoryMeta,
 	resolveContextAlias,
-	resolveCoreDatasourcesPath,
 	resolveDatasourcesPath,
 	resolveDomainRootPath,
 	resolveRepositoriesPath,
+	resolveSharedDatasourcesPath,
 	selectContext,
 	writeRepositoryInterface
 } from './repositoryModuleShared.js';
+import { getFoundationConstructImportPath } from '../../utils/sharedFoundation.js';
 
 type DatasourceDescriptor = { name: string; importPath: string };
 
@@ -83,22 +84,22 @@ const ensureDomainScaffold = async ({
 };
 
 const resolveDatasourceForPreset = async (contextName: string): Promise<DatasourceDescriptor | null> => {
-	const { contexts, coreAlias } = await getConfigState();
+	const { contexts, sharedAlias } = await getConfigState();
 	const contextAlias = resolveContextAlias(contexts, contextName);
 
-	const coreDatasources = await getAvailableTsNames(resolveCoreDatasourcesPath());
+	const sharedDatasources = await getAvailableTsNames(await resolveSharedDatasourcesPath());
 	const contextDatasources = await getAvailableTsNames(resolveDatasourcesPath(contextName));
 
-	if (coreDatasources.includes('ApiDatasource')) {
-		return { name: 'ApiDatasource', importPath: `${coreAlias}/datasource` };
+	if (sharedDatasources.includes('ApiDatasource')) {
+		return { name: 'ApiDatasource', importPath: getFoundationConstructImportPath(sharedAlias, 'datasource') };
 	}
 
 	if (contextDatasources.includes('ApiDatasource')) {
 		return { name: 'ApiDatasource', importPath: `${contextAlias}/layers/infrastructure/http/datasources` };
 	}
 
-	if (coreDatasources.length) {
-		return { name: coreDatasources[0] as string, importPath: `${coreAlias}/datasource` };
+	if (sharedDatasources.length) {
+		return { name: sharedDatasources[0] as string, importPath: getFoundationConstructImportPath(sharedAlias, 'datasource') };
 	}
 
 	if (contextDatasources.length) {
@@ -253,7 +254,7 @@ export default async function generateModulePreset(): Promise<void> {
 
 	const datasource = await resolveDatasourceForPreset(contextName);
 	if (!datasource) {
-		console.error('❌ No datasource found in core or selected context. Create datasource first.');
+		console.error('❌ No datasource found in shared foundation or selected context. Create datasource first.');
 		process.exitCode = 1;
 		return;
 	}

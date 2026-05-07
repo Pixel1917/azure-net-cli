@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import prompts from 'prompts';
 import { writeIfNotExists } from '../utils/fileUtils.js';
+import { getLocalizationPath, getSharedState } from '../utils/sharedFoundation.js';
 
 const parseLocales = (rawLocales: string): string[] => {
 	const parsed = String(rawLocales ?? '')
@@ -61,7 +62,8 @@ export default async function createTranslationManager(): Promise<void> {
 
 	const selectedDefaultLocale = String(defaultLocale ?? locales[0] ?? 'en');
 
-	const translationRoot = path.join(process.cwd(), 'src', 'core', 'translation');
+	const { sharedContext } = await getSharedState();
+	const translationRoot = getLocalizationPath(sharedContext.name);
 	const localesRoot = path.join(translationRoot, 'locales');
 	await fs.mkdir(localesRoot, { recursive: true });
 

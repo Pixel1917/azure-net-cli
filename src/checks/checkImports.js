@@ -144,4 +144,3 @@ export default async function checkImports() {
 	}
 	process.exitCode = 1;
 }
-//# sourceMappingURL=checkImports.js.map

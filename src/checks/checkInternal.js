@@ -37,4 +37,3 @@ export default async function checkInternal() {
 		process.exitCode = 1;
 	}
 }
-//# sourceMappingURL=checkInternal.js.map

@@ -4,7 +4,6 @@ import prompts from 'prompts';
 import generateDomain from './generateDomain.js';
 import generateRepository from './generateRepository.js';
 import generatePresenter from './generatePresenter.js';
-
 const findProviderFile = async (contextName, layerName, preferredFileName) => {
 	const providersPath = path.join(process.cwd(), 'src', 'app', contextName, 'layers', layerName, 'providers');
 	const preferredPath = path.join(providersPath, preferredFileName);
@@ -21,7 +20,6 @@ const findProviderFile = async (contextName, layerName, preferredFileName) => {
 		}
 	}
 };
-
 const parseProviderConstName = async (providerPath, fallbackName) => {
 	try {
 		const content = await fs.readFile(providerPath, 'utf-8');
@@ -31,29 +29,24 @@ const parseProviderConstName = async (providerPath, fallbackName) => {
 		return fallbackName;
 	}
 };
-
 export default async function generateModule() {
 	const domainResult = await generateDomain();
 	if (!domainResult) {
 		process.exitCode = 1;
 		return;
 	}
-
 	const repositoryResult = await generateRepository({
 		contextName: domainResult.contextName,
 		domainName: domainResult.domainName,
 		forceCreateUseCases: true
 	});
-
 	if (!repositoryResult) {
 		process.exitCode = 1;
 		return;
 	}
-
 	const infrastructureProviderPath = await findProviderFile(repositoryResult.contextName, 'infrastructure', 'InfrastructureProvider.ts');
 	const applicationProviderPath = await findProviderFile(repositoryResult.contextName, 'application', 'ApplicationProvider.ts');
 	const infrastructureProviderName = await parseProviderConstName(infrastructureProviderPath, 'InfrastructureProvider');
-
 	console.log('\n⚠️ Manual provider registration is required before presenter generation.');
 	console.log(`Infrastructure provider file: ${infrastructureProviderPath}`);
 	console.log(`Application provider file: ${applicationProviderPath}`);
@@ -64,19 +57,16 @@ export default async function generateModule() {
 	console.log(
 		`- Application register: ${repositoryResult.useCasesName}: () => new ${repositoryResult.useCasesName}(${infrastructureProviderName}().${repositoryResult.repositoryName}),`
 	);
-
 	const { isReadyForPresenter } = await prompts({
 		type: 'confirm',
 		name: 'isReadyForPresenter',
 		message: 'Did you register repository/use-cases in providers and want to continue?',
 		initial: false
 	});
-
 	if (!isReadyForPresenter) {
 		console.log('ℹ️ Module flow paused. Complete provider wiring and rerun `azure-net generate presenter`.');
 		return;
 	}
-
 	await generatePresenter({
 		contextName: repositoryResult.contextName,
 		useCasesName: repositoryResult.useCasesName

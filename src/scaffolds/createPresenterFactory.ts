@@ -4,6 +4,7 @@ import path from 'node:path';
 import prompts from 'prompts';
 import { writeIfNotExists, updateIndexTs } from '../utils/fileUtils.js';
 import { toPascalCase } from '../utils/contextUtils.js';
+import { getFoundationConstructPath, getSharedState } from '../utils/sharedFoundation.js';
 
 type ConfigPath = 'ts' | 'js';
 
@@ -37,10 +38,9 @@ const buildDefaultPresenterFactoryConfigEntry = (factoryName: string): string =>
 const upsertDefaultPresenterFactoryConfig = (content: string, factoryName: string): string => {
 	const hasExportDefaultObject = /export\s+default\s*\{[\s\S]*\}\s*;?/.test(content);
 	const defaultFactoryEntry = buildDefaultPresenterFactoryConfigEntry(factoryName);
-	const coreAliasEntry = `coreAlias: '$core'`;
 
 	if (!hasExportDefaultObject) {
-		return `export default {\n\t${coreAliasEntry},\n\t${defaultFactoryEntry}\n};\n`;
+		return `export default {\n\t${defaultFactoryEntry}\n};\n`;
 	}
 
 	let nextContent = content;
@@ -60,20 +60,7 @@ const upsertDefaultPresenterFactoryConfig = (content: string, factoryName: strin
 			return `export default {${withComma}\n\t${defaultFactoryEntry}\n};`;
 		});
 	}
-
-	if (/coreAlias\s*:/.test(nextContent)) {
-		return nextContent.replace(/coreAlias\s*:\s*['"`][^'"`]+['"`]/, coreAliasEntry);
-	}
-
-	return nextContent.replace(/export\s+default\s*\{([\s\S]*)\}\s*;?/, (_full, body: string) => {
-		const trimmedRight = body.replace(/\s*$/, '');
-		if (!trimmedRight.length) {
-			return `export default {\n\t${coreAliasEntry}\n};`;
-		}
-
-		const withComma = trimmedRight.endsWith(',') ? trimmedRight : `${trimmedRight},`;
-		return `export default {${withComma}\n\t${coreAliasEntry}\n};`;
-	});
+	return nextContent;
 };
 
 export default async function createPresenterFactory(): Promise<void> {
@@ -85,7 +72,8 @@ export default async function createPresenterFactory(): Promise<void> {
 	});
 
 	const presenterFactoryName = toPascalCase(String(presenterFactoryNameRaw ?? 'AppPresenter')) || 'AppPresenter';
-	const presenterRootPath = path.join(process.cwd(), 'src', 'core', 'presenter');
+	const { sharedContext } = await getSharedState();
+	const presenterRootPath = getFoundationConstructPath(sharedContext.name, 'presenter');
 	const filePath = path.join(presenterRootPath, `${presenterFactoryName}.ts`);
 
 	await fs.mkdir(presenterRootPath, { recursive: true });

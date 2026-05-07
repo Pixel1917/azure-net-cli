@@ -5,6 +5,7 @@ import { toKebabCase, toPascalCase } from '../../utils/contextUtils.js';
 import { writeIfNotExists, updateIndexTs } from '../../utils/fileUtils.js';
 import { getConfigState, resolveContextAlias, selectContext } from './repositoryModuleShared.js';
 import { loadUserConfig } from '../../utils/loadConfig.js';
+import { getFoundationConstructImportPath, getFoundationConstructPath, getSharedState } from '../../utils/sharedFoundation.js';
 
 type MethodParam = { name: string; type: string };
 type RepositoryMethod = { name: string; params: MethodParam[]; responseType: string };
@@ -108,8 +109,9 @@ const parseRepositoryHttpMethods = (content: string): Map<string, string> => {
 	return methods;
 };
 
-const getCorePresenterFactories = async (): Promise<string[]> => {
-	const presenterPath = path.join(process.cwd(), 'src', 'core', 'presenter');
+const getSharedPresenterFactories = async (): Promise<string[]> => {
+	const { sharedContext } = await getSharedState();
+	const presenterPath = getFoundationConstructPath(sharedContext.name, 'presenter');
 	try {
 		const files = await fs.readdir(presenterPath);
 		return files.filter((item) => item.endsWith('.ts') && item !== 'index.ts').map((item) => item.replace(/\.ts$/, ''));
@@ -118,8 +120,9 @@ const getCorePresenterFactories = async (): Promise<string[]> => {
 	}
 };
 
-const getCoreSchemaFactories = async (): Promise<string[]> => {
-	const schemaPath = path.join(process.cwd(), 'src', 'core', 'schema');
+const getSharedSchemaFactories = async (): Promise<string[]> => {
+	const { sharedContext } = await getSharedState();
+	const schemaPath = getFoundationConstructPath(sharedContext.name, 'schema');
 	try {
 		const files = await fs.readdir(schemaPath);
 		return files.filter((item) => item.endsWith('.ts') && item !== 'index.ts').map((item) => item.replace(/\.ts$/, ''));
@@ -287,13 +290,15 @@ export default async function generatePresenter(options: GeneratePresenterOption
 	const presentationPath = path.join(process.cwd(), 'src', 'app', contextName, 'layers', 'presentation', presenterFolder);
 	await fs.mkdir(presentationPath, { recursive: true });
 
-	const { contexts, coreAlias } = await getConfigState();
+	const { contexts, sharedAlias } = await getConfigState();
 	const contextAlias = resolveContextAlias(contexts, contextName);
+	const presenterImportPath = getFoundationConstructImportPath(sharedAlias, 'presenter');
+	const schemaFactoryImportPath = getFoundationConstructImportPath(sharedAlias, 'schema');
 
 	let presenterFactory = String((await loadUserConfig()).defaultPresenterFactory ?? '').trim();
 	let useNativePresenter = false;
 	if (!presenterFactory) {
-		const availableFactories = await getCorePresenterFactories();
+		const availableFactories = await getSharedPresenterFactories();
 		const { selectedFactory } = await prompts({
 			type: 'select',
 			name: 'selectedFactory',
@@ -345,9 +350,9 @@ export default async function generatePresenter(options: GeneratePresenterOption
 
 			if (!schemaFactoryResolved) {
 				if (!schemaFactory) {
-					const availableSchemas = await getCoreSchemaFactories();
+					const availableSchemas = await getSharedSchemaFactories();
 					if (!availableSchemas.length) {
-						console.error('❌ No schema factories found in src/core/schema.');
+						console.error('❌ No schema factories found in shared foundation constructs/schema.');
 						process.exitCode = 1;
 						return;
 					}
@@ -372,7 +377,7 @@ export default async function generatePresenter(options: GeneratePresenterOption
 			await fs.mkdir(schemaPath, { recursive: true });
 			schemaIndexNeeded = true;
 
-			const schemaContent = `import { ${schemaFactory} } from '${coreAlias}/schema';
+			const schemaContent = `import { ${schemaFactory} } from '${schemaFactoryImportPath}';
 import type { ${requestParam.type} } from '${contextAlias}/layers/domain/${useCasesInfo.domainName}';
 
 export const ${schemaConstName} = ${schemaFactory}<${requestParam.type}>()
@@ -414,7 +419,7 @@ export const ${schemaConstName} = ${schemaFactory}<${requestParam.type}>()
 
 	const factoryImport = useNativePresenter
 		? `import { createPresenter } from '@azure-net/kit/delivery';`
-		: `import { ${presenterFactory} } from '${coreAlias}/presenter';`;
+		: `import { ${presenterFactory} } from '${presenterImportPath}';`;
 
 	const schemaImportLine = schemaImports.length ? `import { ${Array.from(new Set(schemaImports)).join(', ')} } from './schema';` : '';
 	const typeImportLine = typeImports.length

@@ -22,7 +22,7 @@ addCommand
 
 createCommand
 	.command('schema-factory')
-	.description('Create base schema in src/core/schema')
+	.description('Create base schema in shared essentials foundation constructs')
 	.action(async () => {
 		const handler = (await import('../src/scaffolds/createCoreSchema.js')).default;
 		await handler();
@@ -30,7 +30,7 @@ createCommand
 
 createCommand
 	.command('translation-manager')
-	.description('Create translation manager in src/core/translation')
+	.description('Create translation manager in shared essentials localization')
 	.action(async () => {
 		const handler = (await import('../src/scaffolds/createTranslationManager.js')).default;
 		await handler();
@@ -38,7 +38,7 @@ createCommand
 
 createCommand
 	.command('presenter-factory')
-	.description('Create presenter factory in src/core/presenter')
+	.description('Create presenter factory in shared essentials foundation constructs')
 	.action(async () => {
 		const handler = (await import('../src/scaffolds/createPresenterFactory.js')).default;
 		await handler();
@@ -46,7 +46,7 @@ createCommand
 
 createCommand
 	.command('schema-rule')
-	.description('Create schema rule in src/core/schema/custom-rules')
+	.description('Create schema rule in shared essentials foundation constructs')
 	.action(async () => {
 		const handler = (await import('../src/scaffolds/createSchemaRule.js')).default;
 		await handler();
@@ -54,7 +54,7 @@ createCommand
 
 createCommand
 	.command('response')
-	.description('Create response in src/core/response')
+	.description('Create response in shared essentials foundation constructs')
 	.action(async () => {
 		const handler = (await import('../src/scaffolds/createResponse.js')).default;
 		await handler();

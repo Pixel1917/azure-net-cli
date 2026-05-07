@@ -3,11 +3,12 @@ import path from 'node:path';
 import prompts from 'prompts';
 import { writeIfNotExists, updateIndexTs } from '../utils/fileUtils.js';
 import { toPascalCase } from '../utils/contextUtils.js';
-import { loadUserConfig, resolveConfigFile } from '../utils/loadConfig.js';
+import { loadUserConfig } from '../utils/loadConfig.js';
 import { normalizeContexts } from '../init/initAliases.js';
+import { getFoundationConstructImportPath, getFoundationConstructPath, getSharedState } from '../utils/sharedFoundation.js';
 
 type NormalizedContext = { name: string; alias: string };
-type DatasourceChoiceValue = null | { name: string; source: 'core' | 'context' };
+type DatasourceChoiceValue = null | { name: string; source: 'shared' | 'context' };
 
 const createProviderTemplateWithoutDatasource = (
 	providerName: string,
@@ -45,26 +46,6 @@ export const ${providerName} = createBoundaryProvider('${contextPrefix}${provide
 `;
 };
 
-const getCoreAliasOrThrow = async (): Promise<string> => {
-	const configRef = resolveConfigFile();
-	if (!configRef.exists) {
-		throw new Error(
-			'azure-net.config is not configured. Run "azure-net init folders-structure" and do not forget to fill contexts if you need them.'
-		);
-	}
-
-	const content = await fs.readFile(configRef.filepath, 'utf-8');
-	const aliasMatch = content.match(/coreAlias\s*:\s*['"`]([^'"`]+)['"`]/);
-	const alias = aliasMatch?.[1]?.trim();
-	if (!alias) {
-		throw new Error(
-			'azure-net.config is not configured. Run "azure-net init folders-structure" and do not forget to fill contexts if you need them.'
-		);
-	}
-
-	return alias.startsWith('$') ? alias : `$${alias}`;
-};
-
 const getDatasourcesFromPath = async (targetPath: string): Promise<string[]> => {
 	try {
 		const files = await fs.readdir(targetPath);
@@ -74,11 +55,11 @@ const getDatasourcesFromPath = async (targetPath: string): Promise<string[]> => 
 	}
 };
 
-const resolveContextPrefix = (target: string): string => (target === 'core' ? 'Core' : toPascalCase(target));
+const resolveContextPrefix = (target: string): string => (target === '__shared__' ? 'Shared' : toPascalCase(target));
 
 const resolveProviderPath = (target: string): string => {
-	if (target === 'core') {
-		return path.join(process.cwd(), 'src', 'core', 'provider');
+	if (target === '__shared__') {
+		throw new Error('Shared provider path must be resolved async.');
 	}
 
 	return path.join(process.cwd(), 'src', 'app', target, 'layers', 'infrastructure', 'providers');
@@ -109,7 +90,10 @@ export default async function createDatasourceProvider(): Promise<void> {
 	const providerName = ensureProviderName(String(providerNameRaw ?? 'DatasourceProvider'));
 	const config = await loadUserConfig();
 	const contexts = normalizeContexts(config.contexts) as NormalizedContext[];
-	const contextChoices = [{ title: 'core', value: 'core' }, ...contexts.map((context) => ({ title: context.name, value: context.name }))];
+	const contextChoices = [
+		{ title: 'shared foundation', value: '__shared__' },
+		...contexts.map((context) => ({ title: context.name, value: context.name }))
+	];
 
 	const { target } = await prompts({
 		type: 'select',
@@ -119,18 +103,19 @@ export default async function createDatasourceProvider(): Promise<void> {
 		initial: 0
 	});
 
-	const selectedTarget = String(target ?? 'core');
-	const coreDatasources = await getDatasourcesFromPath(path.join(process.cwd(), 'src', 'core', 'datasource'));
+	const selectedTarget = String(target ?? '__shared__');
+	const { sharedAlias, sharedContext } = await getSharedState();
+	const sharedDatasources = await getDatasourcesFromPath(getFoundationConstructPath(sharedContext.name, 'datasource'));
 	const contextDatasources =
-		selectedTarget === 'core'
+		selectedTarget === '__shared__'
 			? []
 			: await getDatasourcesFromPath(
 					path.join(process.cwd(), 'src', 'app', selectedTarget, 'layers', 'infrastructure', 'http', 'datasources')
 				);
 
 	const datasourceChoices: Array<{ title: string; value: DatasourceChoiceValue }> = [{ title: 'No datasource', value: null }];
-	for (const datasource of coreDatasources) {
-		datasourceChoices.push({ title: `${datasource} (core)`, value: { name: datasource, source: 'core' } });
+	for (const datasource of sharedDatasources) {
+		datasourceChoices.push({ title: `${datasource} (shared foundation)`, value: { name: datasource, source: 'shared' } });
 	}
 	for (const datasource of contextDatasources) {
 		datasourceChoices.push({ title: `${datasource} (${selectedTarget})`, value: { name: datasource, source: 'context' } });
@@ -152,14 +137,15 @@ export default async function createDatasourceProvider(): Promise<void> {
 		content = createProviderTemplateWithoutDatasource(providerName, contextPrefix);
 	} else {
 		const importPath =
-			selectedDatasource.source === 'core'
-				? `${await getCoreAliasOrThrow()}/datasource`
+			selectedDatasource.source === 'shared'
+				? getFoundationConstructImportPath(sharedAlias, 'datasource')
 				: `${resolveContextAlias(contexts, selectedTarget)}/layers/infrastructure/http/datasources`;
 
 		content = createProviderTemplateWithDatasource(providerName, contextPrefix, selectedDatasource.name, importPath);
 	}
 
-	const providerPath = resolveProviderPath(selectedTarget);
+	const providerPath =
+		selectedTarget === '__shared__' ? getFoundationConstructPath(sharedContext.name, 'provider') : resolveProviderPath(selectedTarget);
 	await fs.mkdir(providerPath, { recursive: true });
 
 	const filePath = path.join(providerPath, `${providerName}.ts`);

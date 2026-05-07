@@ -22,9 +22,8 @@ const listSchemaFiles = async (targetPath: string): Promise<string[]> => {
 };
 
 const resolveAliasMap = async (): Promise<Map<string, string>> => {
-	const { contexts, coreAlias } = await getConfigState();
+	const { contexts } = await getConfigState();
 	const map = new Map<string, string>();
-	map.set(coreAlias, path.join(process.cwd(), 'src', 'core'));
 
 	for (const context of contexts) {
 		const alias = resolveContextAlias(contexts, context.name);

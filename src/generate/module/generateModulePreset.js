@@ -11,35 +11,30 @@ import {
 	getConfigState,
 	getRepositoryMeta,
 	resolveContextAlias,
-	resolveCoreDatasourcesPath,
 	resolveDatasourcesPath,
 	resolveDomainRootPath,
 	resolveRepositoriesPath,
+	resolveSharedDatasourcesPath,
 	selectContext,
 	writeRepositoryInterface
 } from './repositoryModuleShared.js';
-
+import { getFoundationConstructImportPath } from '../../utils/sharedFoundation.js';
 const toInterfaceFileName = (interfaceName) => `${String(interfaceName ?? '').replace(/^I/, '') || 'Type'}.ts`;
-
 const createInterfaceContent = (interfaceName) => `export interface ${interfaceName} {
 \t[key: string]: unknown;
 }
 `;
-
 const writeDomainIndexes = async (domainPath, modelPath, portsPath) => {
 	await updateIndexTs(modelPath);
 	await updateIndexTs(portsPath);
 	await fs.writeFile(path.join(domainPath, 'index.ts'), `export * from './model';\nexport * from './ports';\n`, 'utf-8');
 };
-
 const ensureDomainScaffold = async ({ contextName, entityNamePascal, domainName }) => {
 	const domainPath = resolveDomainRootPath(contextName, domainName);
 	const modelPath = path.join(domainPath, 'model');
 	const portsPath = path.join(domainPath, 'ports');
-
 	await fs.mkdir(modelPath, { recursive: true });
 	await fs.mkdir(portsPath, { recursive: true });
-
 	const modelInterfaces = [`I${entityNamePascal}`];
 	const portInterfaces = [
 		`I${entityNamePascal}CreateRequest`,
@@ -47,49 +42,36 @@ const ensureDomainScaffold = async ({ contextName, entityNamePascal, domainName 
 		`I${entityNamePascal}CollectionResponse`,
 		`I${entityNamePascal}CollectionQuery`
 	];
-
 	for (const interfaceName of modelInterfaces) {
 		const filePath = path.join(modelPath, toInterfaceFileName(interfaceName));
-		// eslint-disable-next-line no-await-in-loop
 		await writeIfNotExists(filePath, createInterfaceContent(interfaceName));
 	}
-
 	for (const interfaceName of portInterfaces) {
 		const filePath = path.join(portsPath, toInterfaceFileName(interfaceName));
-		// eslint-disable-next-line no-await-in-loop
 		await writeIfNotExists(filePath, createInterfaceContent(interfaceName));
 	}
-
 	await writeDomainIndexes(domainPath, modelPath, portsPath);
 	return { domainPath, modelPath, portsPath };
 };
-
 const resolveDatasourceForPreset = async (contextName) => {
-	const { contexts, coreAlias } = await getConfigState();
+	const { contexts, sharedAlias } = await getConfigState();
 	const contextAlias = resolveContextAlias(contexts, contextName);
-
-	const coreDatasources = await getAvailableTsNames(resolveCoreDatasourcesPath());
+	const sharedDatasources = await getAvailableTsNames(await resolveSharedDatasourcesPath());
 	const contextDatasources = await getAvailableTsNames(resolveDatasourcesPath(contextName));
-
-	if (coreDatasources.includes('ApiDatasource')) {
-		return { name: 'ApiDatasource', importPath: `${coreAlias}/datasource` };
+	if (sharedDatasources.includes('ApiDatasource')) {
+		return { name: 'ApiDatasource', importPath: getFoundationConstructImportPath(sharedAlias, 'datasource') };
 	}
-
 	if (contextDatasources.includes('ApiDatasource')) {
 		return { name: 'ApiDatasource', importPath: `${contextAlias}/layers/infrastructure/http/datasources` };
 	}
-
-	if (coreDatasources.length) {
-		return { name: coreDatasources[0], importPath: `${coreAlias}/datasource` };
+	if (sharedDatasources.length) {
+		return { name: sharedDatasources[0], importPath: getFoundationConstructImportPath(sharedAlias, 'datasource') };
 	}
-
 	if (contextDatasources.length) {
 		return { name: contextDatasources[0], importPath: `${contextAlias}/layers/infrastructure/http/datasources` };
 	}
-
 	return null;
 };
-
 const buildPresetMethods = ({ entityNamePascal, route, pathParamType }) => [
 	{
 		name: 'collection',
@@ -137,7 +119,6 @@ const buildPresetMethods = ({ entityNamePascal, route, pathParamType }) => [
 		pathParamType
 	}
 ];
-
 const findProviderFile = async (contextName, layerName, preferredFileName) => {
 	const providersPath = path.join(process.cwd(), 'src', 'app', contextName, 'layers', layerName, 'providers');
 	const preferredPath = path.join(providersPath, preferredFileName);
@@ -154,7 +135,6 @@ const findProviderFile = async (contextName, layerName, preferredFileName) => {
 		}
 	}
 };
-
 const parseProviderConstName = async (providerPath, fallbackName) => {
 	try {
 		const content = await fs.readFile(providerPath, 'utf-8');
@@ -164,21 +144,18 @@ const parseProviderConstName = async (providerPath, fallbackName) => {
 		return fallbackName;
 	}
 };
-
 export default async function generateModulePreset() {
 	const contextName = await selectContext('Select context for preset module:');
 	if (!contextName) {
 		process.exitCode = 1;
 		return;
 	}
-
 	const { entityNameRaw } = await prompts({
 		type: 'text',
 		name: 'entityNameRaw',
 		message: 'Module name:',
 		validate: (value) => (String(value ?? '').trim().length > 0 ? true : 'Module name is required')
 	});
-
 	const { routeRaw } = await prompts({
 		type: 'text',
 		name: 'routeRaw',
@@ -190,7 +167,6 @@ export default async function generateModulePreset() {
 			return route.startsWith('/') ? true : 'Path must start with "/"';
 		}
 	});
-
 	const { pathParamType } = await prompts({
 		type: 'select',
 		name: 'pathParamType',
@@ -201,51 +177,42 @@ export default async function generateModulePreset() {
 		],
 		initial: 0
 	});
-
 	const entityNamePascal = toPascalCase(String(entityNameRaw ?? '').trim());
 	if (!entityNamePascal) {
 		console.error('❌ Invalid module name.');
 		process.exitCode = 1;
 		return;
 	}
-
 	const route = String(routeRaw ?? '').trim();
 	if (!route) {
 		console.error('❌ Invalid route.');
 		process.exitCode = 1;
 		return;
 	}
-
 	const resolvedPathParamType = pathParamType === 'number' ? 'number' : 'string';
 	const domainName = toKebabCase(entityNamePascal);
-
 	await ensureDomainScaffold({ contextName, entityNamePascal, domainName });
-
 	const datasource = await resolveDatasourceForPreset(contextName);
 	if (!datasource) {
-		console.error('❌ No datasource found in core or selected context. Create datasource first.');
+		console.error('❌ No datasource found in shared foundation or selected context. Create datasource first.');
 		process.exitCode = 1;
 		return;
 	}
-
 	const methods = buildPresetMethods({
 		entityNamePascal,
 		route,
 		pathParamType: resolvedPathParamType
 	});
-
 	const repositoryClassName = `${entityNamePascal}Repository`;
 	const meta = getRepositoryMeta(repositoryClassName);
 	const { contexts } = await getConfigState();
 	const contextAlias = resolveContextAlias(contexts, contextName);
-
 	await writeRepositoryInterface({
 		contextName,
 		domainName,
 		meta,
 		methods
 	});
-
 	const repositoryContent = buildRepositoryContent({
 		meta,
 		contextAlias,
@@ -253,30 +220,25 @@ export default async function generateModulePreset() {
 		datasource,
 		methods
 	});
-
 	const repositoriesPath = resolveRepositoriesPath(contextName);
 	await fs.mkdir(repositoriesPath, { recursive: true });
 	const repositoryPath = path.join(repositoriesPath, `${meta.className}.ts`);
 	const createdRepository = await writeIfNotExists(repositoryPath, repositoryContent);
 	await updateIndexTs(repositoriesPath);
-
 	if (!createdRepository) {
-		console.error(`❌ Repository \"${meta.className}\" already exists. Preset flow stopped.`);
+		console.error(`❌ Repository "${meta.className}" already exists. Preset flow stopped.`);
 		process.exitCode = 1;
 		return;
 	}
-
 	await createUseCasesForRepository({
 		contextName,
 		contextAlias,
 		domainName,
 		repositoryName: meta.className
 	});
-
 	const infrastructureProviderPath = await findProviderFile(contextName, 'infrastructure', 'InfrastructureProvider.ts');
 	const applicationProviderPath = await findProviderFile(contextName, 'application', 'ApplicationProvider.ts');
 	const infrastructureProviderName = await parseProviderConstName(infrastructureProviderPath, 'InfrastructureProvider');
-
 	console.log('\n⚠️ Manual provider registration is required before presenter generation.');
 	console.log(`Infrastructure provider file: ${infrastructureProviderPath}`);
 	console.log(`Application provider file: ${applicationProviderPath}`);
@@ -285,13 +247,11 @@ export default async function generateModulePreset() {
 	console.log(
 		`- Application register: ${meta.useCasesClassName}: () => new ${meta.useCasesClassName}(${infrastructureProviderName}().${meta.className}),`
 	);
-
 	const { readyAnswer } = await prompts({
 		type: 'text',
 		name: 'readyAnswer',
 		message: 'Type "y" when provider wiring is done:'
 	});
-
 	const normalizedReadyAnswer = String(readyAnswer ?? '')
 		.trim()
 		.toLowerCase();
@@ -299,7 +259,6 @@ export default async function generateModulePreset() {
 		console.log('ℹ️ Preset module flow paused. Complete provider wiring and run `azure-net generate presenter`.');
 		return;
 	}
-
 	await generatePresenter({
 		contextName,
 		useCasesName: meta.useCasesClassName

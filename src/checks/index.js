@@ -9,4 +9,3 @@ export { default as checkLayerBoundaries } from './checkLayerBoundaries.js';
 export { default as checkFoldersStructure } from './checkFoldersStructure.js';
 export { default as checkInternal } from './checkInternal.js';
 export { default as checkProject } from './checkProject.js';
-//# sourceMappingURL=index.js.map

@@ -5,20 +5,32 @@ import { loadUserConfig } from '../../utils/loadConfig.js';
 import { normalizeContexts } from '../../init/initAliases.js';
 import { toCamelCase, toKebabCase, toPascalCase } from '../../utils/contextUtils.js';
 import { updateIndexTs, writeIfNotExists } from '../../utils/fileUtils.js';
-
+import { getFoundationConstructImportPath, getFoundationConstructPath, getSharedState } from '../../utils/sharedFoundation.js';
+const toHttpMethod = (value) => {
+	const normalized = String(value ?? '').toLowerCase();
+	if (
+		normalized === 'get' ||
+		normalized === 'post' ||
+		normalized === 'put' ||
+		normalized === 'delete' ||
+		normalized === 'head' ||
+		normalized === 'options' ||
+		normalized === 'patch'
+	) {
+		return normalized;
+	}
+	return 'get';
+};
 const HTTP_METHODS = ['get', 'post', 'put', 'delete', 'head', 'options', 'patch'];
-
 const normalizeAlias = (value, fallback) => {
 	const raw = String(value ?? '').trim();
 	if (!raw.length) return fallback;
 	return raw.startsWith('$') ? raw : `$${raw}`;
 };
-
 export const ensureRepositoryName = (rawName) => {
 	const normalized = toPascalCase(String(rawName ?? '').trim() || 'Repository');
 	return normalized.endsWith('Repository') ? normalized : `${normalized}Repository`;
 };
-
 const RESERVED_IDENTIFIERS = new Set([
 	'break',
 	'case',
@@ -67,14 +79,12 @@ const RESERVED_IDENTIFIERS = new Set([
 	'static',
 	'yield'
 ]);
-
 const toSafeIdentifier = (value) => {
 	const normalized = toCamelCase(value || 'repository');
 	if (!normalized.length) return 'repository';
 	if (RESERVED_IDENTIFIERS.has(normalized)) return `${normalized}Repository`;
 	return normalized;
 };
-
 export const getRepositoryMeta = (repositoryClassName) => {
 	const className = ensureRepositoryName(repositoryClassName);
 	const baseName = className.replace(/Repository$/, '') || 'Repository';
@@ -82,7 +92,6 @@ export const getRepositoryMeta = (repositoryClassName) => {
 	const repositoryInterfaceName = `I${baseName}Repository`;
 	const useCasesClassName = `${baseName}UseCases`;
 	const repositoryDependencyName = toSafeIdentifier(baseName || 'repository');
-
 	return {
 		className,
 		baseName,
@@ -92,25 +101,22 @@ export const getRepositoryMeta = (repositoryClassName) => {
 		repositoryDependencyName
 	};
 };
-
 export const getConfigState = async () => {
 	const config = await loadUserConfig();
 	const contexts = normalizeContexts(config.contexts);
-	const coreAlias = normalizeAlias(config.coreAlias, '$core');
-
+	const { sharedAlias, sharedContext } = await getSharedState();
 	return {
 		contexts,
-		coreAlias
+		sharedAlias,
+		sharedContextName: sharedContext.name
 	};
 };
-
 export const selectContext = async (message = 'Select context:') => {
 	const { contexts } = await getConfigState();
 	if (!contexts.length) {
 		console.error('❌ Cannot continue: `contexts` is missing or empty in azure-net.config.ts/js');
 		return null;
 	}
-
 	const { context } = await prompts({
 		type: 'select',
 		name: 'context',
@@ -118,30 +124,25 @@ export const selectContext = async (message = 'Select context:') => {
 		choices: contexts.map((item) => ({ title: item.name, value: item.name })),
 		initial: 0
 	});
-
 	return context ? String(context) : null;
 };
-
 export const resolveContextAlias = (contexts, contextName) => {
 	const found = contexts.find((item) => item.name === contextName);
 	if (!found) return `$${contextName}`;
 	return normalizeAlias(found.alias, `$${contextName}`);
 };
-
 export const resolveRepositoriesPath = (contextName) =>
 	path.join(process.cwd(), 'src', 'app', contextName, 'layers', 'infrastructure', 'http', 'repositories');
-
 export const resolveDatasourcesPath = (contextName) =>
 	path.join(process.cwd(), 'src', 'app', contextName, 'layers', 'infrastructure', 'http', 'datasources');
-
-export const resolveCoreDatasourcesPath = () => path.join(process.cwd(), 'src', 'core', 'datasource');
-
+export const resolveSharedDatasourcesPath = async () => {
+	const { sharedContext } = await getSharedState();
+	return getFoundationConstructPath(sharedContext.name, 'datasource');
+};
 export const resolveDomainRootPath = (contextName, domainName) =>
 	path.join(process.cwd(), 'src', 'app', contextName, 'layers', 'domain', domainName);
-
 export const resolveUseCasesPath = (contextName) =>
 	path.join(process.cwd(), 'src', 'app', contextName, 'layers', 'application', 'use-cases');
-
 export const getAvailableTsNames = async (targetPath) => {
 	try {
 		const files = await fs.readdir(targetPath);
@@ -150,25 +151,22 @@ export const getAvailableTsNames = async (targetPath) => {
 		return [];
 	}
 };
-
 export const selectDatasource = async (contextName) => {
-	const { contexts, coreAlias } = await getConfigState();
+	const { contexts, sharedAlias } = await getConfigState();
 	const contextAlias = resolveContextAlias(contexts, contextName);
-	const coreDatasources = await getAvailableTsNames(resolveCoreDatasourcesPath());
+	const sharedDatasources = await getAvailableTsNames(await resolveSharedDatasourcesPath());
 	const contextDatasources = await getAvailableTsNames(resolveDatasourcesPath(contextName));
-
 	const choices = [];
-	for (const datasource of coreDatasources) {
+	for (const datasource of sharedDatasources) {
 		choices.push({
-			title: `${datasource} (core)`,
+			title: `${datasource} (shared foundation)`,
 			value: {
 				name: datasource,
-				source: 'core',
-				importPath: `${coreAlias}/datasource`
+				source: 'shared',
+				importPath: getFoundationConstructImportPath(sharedAlias, 'datasource')
 			}
 		});
 	}
-
 	for (const datasource of contextDatasources) {
 		choices.push({
 			title: `${datasource} (${contextName})`,
@@ -179,12 +177,10 @@ export const selectDatasource = async (contextName) => {
 			}
 		});
 	}
-
 	if (!choices.length) {
-		console.error(`❌ No datasources found in core or context "${contextName}".`);
+		console.error(`❌ No datasources found in shared foundation or context "${contextName}".`);
 		return null;
 	}
-
 	const { datasource } = await prompts({
 		type: 'select',
 		name: 'datasource',
@@ -192,106 +188,86 @@ export const selectDatasource = async (contextName) => {
 		choices,
 		initial: 0
 	});
-
 	return datasource ?? null;
 };
-
 const updateDomainIndex = async (domainRootPath) => {
 	const exports = [];
-
 	try {
 		await fs.access(path.join(domainRootPath, 'ports'));
 		exports.push(`export * from './ports';`);
 	} catch {
 		// ignore
 	}
-
 	try {
 		await fs.access(path.join(domainRootPath, 'model'));
 		exports.push(`export * from './model';`);
 	} catch {
 		// ignore
 	}
-
 	const content = exports.length ? `${exports.join('\n')}\n` : '';
 	await fs.mkdir(domainRootPath, { recursive: true });
 	await fs.writeFile(path.join(domainRootPath, 'index.ts'), content, 'utf-8');
 };
-
 const normalizeTypeName = (rawTypeName) => {
 	const normalized = toPascalCase(String(rawTypeName ?? '').trim());
 	return normalized || 'IType';
 };
-
 export const ensureDomainType = async ({ contextName, domainName, typeName, layer }) => {
 	const interfaceName = normalizeTypeName(typeName);
 	const domainRootPath = resolveDomainRootPath(contextName, domainName);
 	const preferredLayer = layer === 'model' ? 'model' : 'ports';
 	const portsTypePath = path.join(domainRootPath, 'ports', `${interfaceName}.ts`);
 	const modelTypePath = path.join(domainRootPath, 'model', `${interfaceName}.ts`);
-
 	try {
 		await fs.access(portsTypePath);
 		return { interfaceName, layer: 'ports' };
 	} catch {
 		// ignore
 	}
-
 	try {
 		await fs.access(modelTypePath);
 		return { interfaceName, layer: 'model' };
 	} catch {
 		// ignore
 	}
-
 	const layerPath = path.join(domainRootPath, preferredLayer);
 	const filePath = path.join(layerPath, `${interfaceName}.ts`);
-
 	await fs.mkdir(layerPath, { recursive: true });
 	await writeIfNotExists(filePath, `export interface ${interfaceName} {\n\t[key: string]: unknown;\n}\n`);
 	await updateIndexTs(layerPath);
 	await updateDomainIndex(domainRootPath);
-
 	return { interfaceName, layer: preferredLayer };
 };
-
 export const ensureRepositoryInterfaceFile = async ({ contextName, meta, methods }) => {
 	const domainRootPath = resolveDomainRootPath(contextName, meta.domainName);
 	const portsPath = path.join(domainRootPath, 'ports');
 	await fs.mkdir(portsPath, { recursive: true });
-
 	const resolveTypeLayer = async (typeName) => {
 		const portsTypePath = path.join(domainRootPath, 'ports', `${typeName}.ts`);
 		const modelTypePath = path.join(domainRootPath, 'model', `${typeName}.ts`);
-
 		try {
 			await fs.access(portsTypePath);
 			return 'ports';
 		} catch {
 			// ignore
 		}
-
 		try {
 			await fs.access(modelTypePath);
 			return 'model';
 		} catch {
 			// ignore
 		}
-
 		return null;
 	};
-
 	const importsByLayer = { ports: new Set(), model: new Set() };
 	for (const method of methods) {
-		const relatedTypes = [method.responseType, method.requestType].filter(Boolean);
+		const relatedTypes = [method.responseType, method.requestType].filter((item) => Boolean(item));
 		for (const typeName of relatedTypes) {
-			// eslint-disable-next-line no-await-in-loop
 			const typeLayer = await resolveTypeLayer(typeName);
 			if (typeLayer === 'ports') importsByLayer.ports.add(typeName);
 			if (typeLayer === 'model') importsByLayer.model.add(typeName);
 		}
 	}
-
 	const importLines = [];
 	for (const typeName of Array.from(importsByLayer.ports)) {
 		importLines.push(`import type { ${typeName} } from './${typeName}.js';`);
@@ -299,56 +275,45 @@ export const ensureRepositoryInterfaceFile = async ({ contextName, meta, methods
 	for (const typeName of Array.from(importsByLayer.model)) {
 		importLines.push(`import type { ${typeName} } from '../model/${typeName}.js';`);
 	}
-
 	const signatures = methods
 		.map((method) => {
 			const arg = method.requestType ? `data: ${method.requestType}` : '';
 			return `\t${method.name}(${arg}): Promise<${method.responseType}>;`;
 		})
 		.join('\n');
-
 	const content = `${importLines.join('\n')}${importLines.length ? '\n\n' : ''}export interface ${meta.repositoryInterfaceName} {\n${signatures ? `${signatures}\n` : ''}}\n`;
 	await fs.writeFile(path.join(portsPath, `${meta.repositoryInterfaceName}.ts`), content, 'utf-8');
 	await updateIndexTs(portsPath);
 	await updateDomainIndex(domainRootPath);
 };
-
 const buildHttpCall = (method) => {
 	const httpMethod = method.httpMethod.toLowerCase();
 	const route = method.route || '/public-route';
 	if (!method.requestType) {
 		return `http.${httpMethod}('${route}')`;
 	}
-
 	if (httpMethod === 'get' || httpMethod === 'head' || httpMethod === 'options') {
 		return `http.${httpMethod}('${route}', { searchParams: query.toSearchParams(data) })`;
 	}
-
 	return `http.${httpMethod}('${route}', { json: data })`;
 };
-
 export const buildRepositoryMethodCode = (method) => {
 	const arg = method.requestType ? `data: ${method.requestType}` : '';
 	const call = buildHttpCall(method);
-
 	let getInCallback = `http`;
 	const httpMethod = String(method.httpMethod ?? '').toLowerCase();
 	if (httpMethod === 'get' || httpMethod === 'head' || httpMethod === 'options') {
 		getInCallback = `http, query`;
 	}
-
 	return `\tpublic async ${method.name}(${arg}) {\n\t\treturn this.datasource\n\t\t\t.createRequest<${method.responseType}>(({ ${getInCallback} }) => ${call})\n\t\t\t.then((res) => res.get());\n\t}`;
 };
-
 export const buildRepositoryContent = ({ meta, contextAlias, datasourceImportPath, datasourceName, methods }) => {
 	const importedTypes = new Set([meta.repositoryInterfaceName]);
 	for (const method of methods) {
 		importedTypes.add(method.responseType);
 		if (method.requestType) importedTypes.add(method.requestType);
 	}
-
 	const methodsCode = methods.map((method) => buildRepositoryMethodCode(method)).join('\n\n');
-
 	return `import { ${datasourceName} } from '${datasourceImportPath}';
 import type { ${Array.from(importedTypes).join(', ')} } from '${contextAlias}/layers/domain/${meta.domainName}';
 
@@ -359,35 +324,28 @@ ${methodsCode ? `${methodsCode}\n` : ''}
 }
 `;
 };
-
 const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
 const upsertImport = (content, source, names) => {
-	const uniqueNames = Array.from(new Set(names)).filter(Boolean);
+	const uniqueNames = Array.from(new Set(names)).filter((item) => Boolean(item));
 	if (!uniqueNames.length) return content;
-
 	const importRegex = new RegExp(`import\\s+(type\\s+)?\\{([^}]+)\\}\\s*from\\s*['"]${escapeRegExp(source)}['"];?`);
 	const match = content.match(importRegex);
-
 	if (match) {
-		const existing = match[2]
+		const existing = (match[2] ?? '')
 			.split(',')
 			.map((part) => part.trim())
 			.filter(Boolean);
 		const merged = Array.from(new Set([...existing, ...uniqueNames]));
 		return content.replace(importRegex, `import type { ${merged.join(', ')} } from '${source}';`);
 	}
-
 	const lines = content.split('\n');
 	let insertIndex = 0;
-	while (insertIndex < lines.length && lines[insertIndex].startsWith('import ')) {
+	while (insertIndex < lines.length && (lines[insertIndex] ?? '').startsWith('import ')) {
 		insertIndex += 1;
 	}
-
 	lines.splice(insertIndex, 0, `import type { ${uniqueNames.join(', ')} } from '${source}';`);
 	return lines.join('\n');
 };
-
 export const appendRepositoryMethod = async ({ repositoryPath, method, contextAlias, domainName }) => {
 	let content = await fs.readFile(repositoryPath, 'utf-8');
 	const methodExistsRegex = new RegExp(`\\bpublic\\s+async\\s+${escapeRegExp(method.name)}\\s*\\(`);
@@ -395,53 +353,46 @@ export const appendRepositoryMethod = async ({ repositoryPath, method, contextAl
 		console.warn(`⚠️ Method "${method.name}" already exists in repository, skipped.`);
 		return false;
 	}
-
 	content = upsertImport(content, `${contextAlias}/layers/domain/${domainName}`, [method.responseType, method.requestType]);
-
 	const methodCode = buildRepositoryMethodCode(method);
 	const classEnd = content.lastIndexOf('\n}');
 	if (classEnd === -1) {
 		throw new Error(`Repository class end was not found in ${repositoryPath}`);
 	}
-
 	content = `${content.slice(0, classEnd)}\n\n${methodCode}\n${content.slice(classEnd)}`;
 	await fs.writeFile(repositoryPath, content, 'utf-8');
 	return true;
 };
-
 export const parseRepositoryMethods = (content) => {
 	const methods = [];
 	const regex =
 		/public\s+async\s+(\w+)\(([^)]*)\)\s*\{[\s\S]*?\.createRequest<([^>]+)>\(\(\{ http \}\) =>\s*http\.(get|post|put|delete|head|options|patch)\(/g;
-
 	let match;
 	while ((match = regex.exec(content)) !== null) {
 		const name = match[1];
 		const params = match[2] ?? '';
 		const responseType = (match[3] ?? '').trim();
-		const httpMethod = (match[4] ?? 'get').toLowerCase();
+		const httpMethod = toHttpMethod(match[4]);
 		const requestTypeMatch = params.match(/:\s*([A-Za-z0-9_]+)/);
 		const requestType = requestTypeMatch?.[1] ?? null;
-
 		methods.push({
-			name,
+			name: name ?? 'method',
 			httpMethod,
 			responseType,
+			responseLayer: 'ports',
 			requestType,
+			requestLayer: requestType ? 'ports' : null,
 			route: '/public-route'
 		});
 	}
-
 	return methods;
 };
-
 export const ensureUseCasesFile = async ({ contextName, contextAlias, meta }) => {
 	const repositoryInterfacePath = path.join(
 		resolveDomainRootPath(contextName, meta.domainName),
 		'ports',
 		`${meta.repositoryInterfaceName}.ts`
 	);
-
 	let interfaceContent = '';
 	try {
 		interfaceContent = await fs.readFile(repositoryInterfacePath, 'utf-8');
@@ -449,18 +400,16 @@ export const ensureUseCasesFile = async ({ contextName, contextAlias, meta }) =>
 		console.error(`❌ Repository interface not found: ${repositoryInterfacePath}`);
 		return false;
 	}
-
 	const methods = [];
 	const methodRegex = /(\w+)\(([^)]*)\)\s*:\s*Promise<[^>]+>;/g;
 	let methodMatch;
 	while ((methodMatch = methodRegex.exec(interfaceContent)) !== null) {
-		methods.push(methodMatch[1]);
+		const methodName = methodMatch[1];
+		if (methodName) methods.push(methodName);
 	}
-
 	const declares = methods.map((methodName) => `\tdeclare ${methodName}: ${meta.repositoryInterfaceName}['${methodName}'];`).join('\n');
 	const useCasesPath = resolveUseCasesPath(contextName);
 	await fs.mkdir(useCasesPath, { recursive: true });
-
 	const content = `import { ClassMirror } from '@azure-net/kit';
 import type { ${meta.repositoryInterfaceName} } from '${contextAlias}/layers/domain/${meta.domainName}';
 
@@ -472,12 +421,10 @@ export class ${meta.useCasesClassName} extends ClassMirror {
 ${declares ? `${declares}\n` : ''}
 }
 `;
-
 	await fs.writeFile(path.join(useCasesPath, `${meta.useCasesClassName}.ts`), content, 'utf-8');
 	await updateIndexTs(useCasesPath);
 	return true;
 };
-
 export const promptMethodDefinition = async () => {
 	const { methodNameRaw } = await prompts({
 		type: 'text',
@@ -485,7 +432,6 @@ export const promptMethodDefinition = async () => {
 		message: 'Method name:',
 		validate: (value) => (String(value ?? '').trim().length > 0 ? true : 'Method name is required')
 	});
-
 	const { httpMethod } = await prompts({
 		type: 'select',
 		name: 'httpMethod',
@@ -493,14 +439,12 @@ export const promptMethodDefinition = async () => {
 		choices: HTTP_METHODS.map((value) => ({ title: value, value })),
 		initial: 0
 	});
-
 	const { responseTypeRaw } = await prompts({
 		type: 'text',
 		name: 'responseTypeRaw',
 		message: 'Response type name:',
 		validate: (value) => (String(value ?? '').trim().length > 0 ? true : 'Response type is required')
 	});
-
 	const { responseLayer } = await prompts({
 		type: 'select',
 		name: 'responseLayer',
@@ -511,7 +455,6 @@ export const promptMethodDefinition = async () => {
 		],
 		initial: 0
 	});
-
 	const { routeRaw } = await prompts({
 		type: 'text',
 		name: 'routeRaw',
@@ -523,17 +466,14 @@ export const promptMethodDefinition = async () => {
 			return raw.startsWith('/') ? true : 'Path must start with "/"';
 		}
 	});
-
 	const { hasRequest } = await prompts({
 		type: 'confirm',
 		name: 'hasRequest',
 		message: 'Has request payload type?',
 		initial: false
 	});
-
 	let requestType = null;
 	let requestLayer = null;
-
 	if (hasRequest) {
 		const { requestTypeRaw } = await prompts({
 			type: 'text',
@@ -541,7 +481,6 @@ export const promptMethodDefinition = async () => {
 			message: 'Request type name:',
 			validate: (value) => (String(value ?? '').trim().length > 0 ? true : 'Request type is required')
 		});
-
 		const layerResult = await prompts({
 			type: 'select',
 			name: 'requestLayer',
@@ -552,14 +491,12 @@ export const promptMethodDefinition = async () => {
 			],
 			initial: 0
 		});
-
 		requestType = normalizeTypeName(requestTypeRaw);
 		requestLayer = layerResult.requestLayer ?? 'ports';
 	}
-
 	return {
 		name: toCamelCase(String(methodNameRaw ?? '').trim() || 'method'),
-		httpMethod: String(httpMethod ?? 'get').toLowerCase(),
+		httpMethod: toHttpMethod(httpMethod),
 		responseType: normalizeTypeName(responseTypeRaw),
 		responseLayer: responseLayer ?? 'ports',
 		route: String(routeRaw ?? '/public-route').trim() || '/public-route',

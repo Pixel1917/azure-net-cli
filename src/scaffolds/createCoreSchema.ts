@@ -4,6 +4,7 @@ import path from 'node:path';
 import prompts from 'prompts';
 import { writeIfNotExists, updateIndexTs } from '../utils/fileUtils.js';
 import { toPascalCase } from '../utils/contextUtils.js';
+import { getFoundationConstructPath, getSharedState } from '../utils/sharedFoundation.js';
 
 type MessagePreset = 'ru' | 'en' | 'i18n';
 type ConfigPath = 'ts' | 'js';
@@ -48,10 +49,9 @@ const buildDefaultSchemaFactoryConfigEntry = (factoryName: string): string => {
 const upsertDefaultSchemaFactoryConfig = (content: string, factoryName: string): string => {
 	const hasExportDefaultObject = /export\s+default\s*\{[\s\S]*\}\s*;?/.test(content);
 	const defaultFactoryEntry = buildDefaultSchemaFactoryConfigEntry(factoryName);
-	const coreAliasEntry = `coreAlias: '$core'`;
 
 	if (!hasExportDefaultObject) {
-		return `export default {\n\t${coreAliasEntry},\n\t${defaultFactoryEntry}\n};\n`;
+		return `export default {\n\t${defaultFactoryEntry}\n};\n`;
 	}
 
 	let nextContent = content;
@@ -71,20 +71,7 @@ const upsertDefaultSchemaFactoryConfig = (content: string, factoryName: string):
 			return `export default {${withComma}\n\t${defaultFactoryEntry}\n};`;
 		});
 	}
-
-	if (/coreAlias\s*:/.test(nextContent)) {
-		return nextContent.replace(/coreAlias\s*:\s*['"`][^'"`]+['"`]/, coreAliasEntry);
-	}
-
-	return nextContent.replace(/export\s+default\s*\{([\s\S]*)\}\s*;?/, (_full, body: string) => {
-		const trimmedRight = body.replace(/\s*$/, '');
-		if (!trimmedRight.length) {
-			return `export default {\n\t${coreAliasEntry}\n};`;
-		}
-
-		const withComma = trimmedRight.endsWith(',') ? trimmedRight : `${trimmedRight},`;
-		return `export default {${withComma}\n\t${coreAliasEntry}\n};`;
-	});
+	return nextContent;
 };
 
 export default async function createCoreSchema(): Promise<void> {
@@ -111,7 +98,8 @@ export default async function createCoreSchema(): Promise<void> {
 
 	const selectedPreset = (preset ?? 'i18n') as MessagePreset;
 	const messagesImportName = resolvePresetImportName(selectedPreset);
-	const coreSchemaPath = path.join(process.cwd(), 'src', 'core', 'schema');
+	const { sharedContext } = await getSharedState();
+	const coreSchemaPath = getFoundationConstructPath(sharedContext.name, 'schema');
 	const customRulesPath = path.join(coreSchemaPath, 'custom-rules');
 	const filePath = path.join(coreSchemaPath, `${schemaFactoryName}.ts`);
 
@@ -123,7 +111,7 @@ export default async function createCoreSchema(): Promise<void> {
 		console.log(`⚠️ Schema factory "${schemaFactoryName}" already exists. File was not overwritten.`);
 	} else {
 		await updateIndexTs(coreSchemaPath);
-		console.log(`✅ Core schema factory created: ${filePath}`);
+		console.log(`✅ Shared schema factory created: ${filePath}`);
 	}
 
 	const { useAsDefault } = await prompts({

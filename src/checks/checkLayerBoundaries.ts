@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { loadUserConfig } from '../utils/loadConfig.js';
 import { normalizeContexts } from '../init/initAliases.js';
+import { SHARED_ESSENTIALS_DIR_NAME } from '../utils/sharedFoundation.js';
 
 type BoundaryIssue = {
 	file: string;
@@ -115,10 +116,12 @@ const resolveContextFromRelativeImport = (filePath: string, importPath: string, 
 	return null;
 };
 
-const isSharedLikeContext = (contextName: string, alias: string): boolean => {
-	const normalizedName = contextName.toLowerCase();
-	const normalizedAlias = alias.toLowerCase();
-	return normalizedName.includes('shared') || normalizedAlias.includes('shared');
+const isInside = (targetPath: string, rootPath: string): boolean =>
+	targetPath === rootPath || targetPath.startsWith(`${rootPath}${path.sep}`);
+
+const resolveAbsoluteRelativeImport = (filePath: string, importPath: string): string | null => {
+	if (!importPath.startsWith('.')) return null;
+	return path.resolve(path.dirname(filePath), importPath);
 };
 
 export default async function checkLayerBoundaries(): Promise<void> {
@@ -131,60 +134,33 @@ export default async function checkLayerBoundaries(): Promise<void> {
 		return;
 	}
 
-	const coreAlias = normalizeAlias(config.coreAlias, '$core');
 	const sharedAliasRaw = normalizeAlias(config.sharedAlias, '');
 	const sharedAlias = sharedAliasRaw.length ? sharedAliasRaw : null;
+	if (!sharedAlias) {
+		console.error('❌ sharedAlias is missing in azure-net.config.ts/js. Set it explicitly to the shared context alias.');
+		process.exitCode = 1;
+		return;
+	}
 
 	const aliasToContext = new Map<string, ContextConfig>();
 	for (const context of contexts) {
 		aliasToContext.set(context.alias, context);
 	}
 
-	const knownAliases = [coreAlias, ...contexts.map((context) => context.alias)];
-	if (sharedAlias && !knownAliases.includes(sharedAlias)) {
-		knownAliases.push(sharedAlias);
+	const knownAliases = [...contexts.map((context) => context.alias)];
+	const sharedContext = aliasToContext.get(sharedAlias);
+	if (!sharedContext) {
+		console.error(`❌ sharedAlias "${sharedAlias}" does not point to any configured context.`);
+		process.exitCode = 1;
+		return;
 	}
 
 	const issues: BoundaryIssue[] = [];
 
-	const coreRoot = path.join(process.cwd(), 'src', 'core');
-	try {
-		await fs.access(coreRoot);
-		const coreFiles = await listFiles(coreRoot);
-		for (const filePath of coreFiles) {
-			const content = await fs.readFile(filePath, 'utf-8');
-			const imports = extractImports(content);
-
-			for (const entry of imports) {
-				const targetAlias = resolveAliasFromImport(entry.value, knownAliases);
-				if (targetAlias && targetAlias !== coreAlias) {
-					const targetContext = aliasToContext.get(targetAlias);
-					issues.push({
-						file: filePath,
-						line: entry.line,
-						message: targetContext
-							? `Layer boundary violation: core cannot import from context "${targetContext.name}" (${targetAlias})`
-							: `Layer boundary violation: core cannot import from "${targetAlias}"`
-					});
-					continue;
-				}
-
-				const relativeTargetContext = resolveContextFromRelativeImport(filePath, entry.value, contexts);
-				if (!relativeTargetContext) continue;
-
-				issues.push({
-					file: filePath,
-					line: entry.line,
-					message: `Layer boundary violation: core cannot import from context "${relativeTargetContext.name}" via relative path`
-				});
-			}
-		}
-	} catch {
-		// Core folder is optional for the check.
-	}
-
 	for (const context of contexts) {
 		const contextRoot = path.join(process.cwd(), 'src', 'app', context.name);
+		const isSharedContext = context.alias === sharedAlias;
+		const sharedEssentialsRoot = isSharedContext ? path.join(contextRoot, SHARED_ESSENTIALS_DIR_NAME) : null;
 
 		try {
 			await fs.access(contextRoot);
@@ -193,19 +169,32 @@ export default async function checkLayerBoundaries(): Promise<void> {
 		}
 
 		const files = await listFiles(contextRoot);
-		const allowedAliases = new Set<string>([context.alias, coreAlias]);
-		if (sharedAlias && context.alias !== sharedAlias) {
+		const allowedAliases = new Set<string>([context.alias]);
+		if (context.alias !== sharedAlias) {
 			allowedAliases.add(sharedAlias);
 		}
 
 		for (const filePath of files) {
 			const content = await fs.readFile(filePath, 'utf-8');
 			const imports = extractImports(content);
+			const isSharedEssentialsFile = Boolean(sharedEssentialsRoot && isInside(filePath, sharedEssentialsRoot));
 
 			for (const entry of imports) {
 				const targetAlias = resolveAliasFromImport(entry.value, knownAliases);
 				if (!targetAlias) continue;
-				if (targetAlias === coreAlias) continue;
+
+				if (isSharedEssentialsFile && targetAlias === sharedAlias) {
+					const importRest = entry.value.slice(sharedAlias.length).replace(/^\/+/, '');
+					if (importRest.length && !importRest.startsWith(`${SHARED_ESSENTIALS_DIR_NAME}/`)) {
+						issues.push({
+							file: filePath,
+							line: entry.line,
+							message: `Layer boundary violation: shared essentials cannot import from shared "${importRest}". Essentials may depend only on shared essentials code.`
+						});
+						continue;
+					}
+				}
+
 				if (allowedAliases.has(targetAlias)) continue;
 
 				const targetContext = aliasToContext.get(targetAlias);
@@ -213,32 +202,40 @@ export default async function checkLayerBoundaries(): Promise<void> {
 					? `Layer boundary violation: context "${context.name}" cannot import from context "${targetContext.name}" (${targetAlias})`
 					: `Layer boundary violation: context "${context.name}" cannot import from "${targetAlias}"`;
 
-				const withSharedHint =
-					!sharedAlias && targetContext && isSharedLikeContext(targetContext.name, targetAlias)
-						? `${baseMessage}. sharedAlias is not configured in azure-net.config.ts/js; if this context is shared, set sharedAlias explicitly`
-						: baseMessage;
-
 				issues.push({
 					file: filePath,
 					line: entry.line,
-					message: withSharedHint
+					message: baseMessage
 				});
 			}
 
 			for (const entry of imports) {
+				const absoluteRelativeImport = resolveAbsoluteRelativeImport(filePath, entry.value);
+				if (
+					isSharedEssentialsFile &&
+					absoluteRelativeImport &&
+					sharedEssentialsRoot &&
+					isInside(absoluteRelativeImport, contextRoot) &&
+					!isInside(absoluteRelativeImport, sharedEssentialsRoot)
+				) {
+					issues.push({
+						file: filePath,
+						line: entry.line,
+						message: 'Layer boundary violation: shared essentials cannot import from shared layers/ui via relative path.'
+					});
+					continue;
+				}
+
 				const relativeTargetContext = resolveContextFromRelativeImport(filePath, entry.value, contexts);
 				if (!relativeTargetContext || relativeTargetContext.name === context.name) continue;
+				if (context.alias !== sharedAlias && relativeTargetContext.alias === sharedAlias) continue;
 
 				const baseMessage = `Layer boundary violation: context "${context.name}" cannot import from context "${relativeTargetContext.name}" via relative path`;
-				const withSharedHint =
-					!sharedAlias && isSharedLikeContext(relativeTargetContext.name, relativeTargetContext.alias)
-						? `${baseMessage}. sharedAlias is not configured in azure-net.config.ts/js; if this context is shared, set sharedAlias explicitly`
-						: baseMessage;
 
 				issues.push({
 					file: filePath,
 					line: entry.line,
-					message: withSharedHint
+					message: baseMessage
 				});
 			}
 		}

@@ -3,6 +3,7 @@ import path from 'node:path';
 import prompts from 'prompts';
 import { writeIfNotExists, updateIndexTs } from '../utils/fileUtils.js';
 import { toPascalCase, toCamelCase } from '../utils/contextUtils.js';
+import { getFoundationConstructPath, getSharedState } from '../utils/sharedFoundation.js';
 
 const createSchemaRuleTemplate = (
 	ruleName: string
@@ -25,7 +26,8 @@ export default async function createSchemaRule(): Promise<void> {
 
 	const pascalName = toPascalCase(String(ruleNameRaw ?? 'File')) || 'File';
 	const camelName = toCamelCase(pascalName) || 'file';
-	const rulesPath = path.join(process.cwd(), 'src', 'core', 'schema', 'custom-rules');
+	const { sharedContext } = await getSharedState();
+	const rulesPath = path.join(getFoundationConstructPath(sharedContext.name, 'schema'), 'custom-rules');
 	const filePath = path.join(rulesPath, `${pascalName}.ts`);
 
 	await fs.mkdir(rulesPath, { recursive: true });

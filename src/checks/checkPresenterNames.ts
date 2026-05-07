@@ -162,14 +162,9 @@ export default async function checkPresenterNames(): Promise<void> {
 	}
 
 	const globalFactoryNames = new Set<string>();
-	for (const [filePath, content] of fileContents.entries()) {
+	for (const content of fileContents.values()) {
 		for (const name of extractFactoryNamesFromContent(content)) {
 			globalFactoryNames.add(name);
-		}
-		if (filePath.endsWith(path.join('core', 'presenter', 'index.ts')) || filePath.endsWith(path.join('core', 'presenter', 'index.js'))) {
-			for (const name of extractImportedPresenterFactories(content)) {
-				globalFactoryNames.add(name);
-			}
 		}
 	}
 

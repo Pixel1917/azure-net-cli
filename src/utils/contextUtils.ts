@@ -4,7 +4,6 @@ import prompts from 'prompts';
 import { loadUserConfig } from './loadConfig.js';
 
 const APP_PATH = path.join(process.cwd(), 'src/app');
-const CORE_PATH = path.join(process.cwd(), 'src/core');
 
 function normalizeContextNames(rawContexts: unknown): string[] {
 	if (!Array.isArray(rawContexts)) return [];
@@ -28,14 +27,14 @@ export async function selectContext(message = 'Select context:'): Promise<string
 		type: 'select',
 		name: 'context',
 		message,
-		choices: [...contexts.map((c) => ({ title: c, value: c })), { title: 'core', value: 'core' }]
+		choices: contexts.map((c) => ({ title: c, value: c }))
 	});
 
 	return context ? String(context) : null;
 }
 
 export function getContextPath(context: string): string {
-	return context === 'core' ? CORE_PATH : path.join(APP_PATH, context, 'layers');
+	return path.join(APP_PATH, context, 'layers');
 }
 
 export async function getAvailableFiles(dir: string, pattern = '.ts'): Promise<string[]> {

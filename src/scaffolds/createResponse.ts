@@ -3,6 +3,7 @@ import path from 'node:path';
 import prompts from 'prompts';
 import { writeIfNotExists, updateIndexTs } from '../utils/fileUtils.js';
 import { toPascalCase } from '../utils/contextUtils.js';
+import { getFoundationConstructPath, getSharedState } from '../utils/sharedFoundation.js';
 
 const createResponseWithWrapperTemplate = (name: string): string => {
 	const interfaceName = `I${name}`;
@@ -47,7 +48,8 @@ export default async function createResponse(): Promise<void> {
 		initial: true
 	});
 
-	const responseRoot = path.join(process.cwd(), 'src', 'core', 'response');
+	const { sharedContext } = await getSharedState();
+	const responseRoot = getFoundationConstructPath(sharedContext.name, 'response');
 	const filePath = path.join(responseRoot, `${responseName}.ts`);
 	await fs.mkdir(responseRoot, { recursive: true });
 
