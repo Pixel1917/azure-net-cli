@@ -6,6 +6,7 @@ import checkLayerBoundaries from './checkLayerBoundaries.js';
 import checkFoldersStructure from './checkFoldersStructure.js';
 import checkImports from './checkImports.js';
 import checkHooks from './checkHooks.js';
+import checkLayerImports from './checkLayerImports.js';
 
 type CheckTask = {
 	name: string;
@@ -19,6 +20,7 @@ const tasks: CheckTask[] = [
 	{ name: 'domain', run: checkDomain },
 	{ name: 'imports', run: checkImports },
 	{ name: 'hooks', run: checkHooks },
+	{ name: 'layer-imports', run: checkLayerImports },
 	{ name: 'layer-boundaries', run: checkLayerBoundaries },
 	{ name: 'folders-structure', run: checkFoldersStructure }
 ];

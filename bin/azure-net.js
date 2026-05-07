@@ -258,6 +258,14 @@ checkCommand
 	});
 
 checkCommand
+	.command('layer-imports')
+	.description('Check forbidden imports between layers inside each context')
+	.action(async () => {
+		const handler = (await import('../src/checks/checkLayerImports.js')).default;
+		await handler();
+	});
+
+checkCommand
 	.command('layer-boundaries')
 	.description('Check layer boundaries between contexts by aliases')
 	.action(async () => {

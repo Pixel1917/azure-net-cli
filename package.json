@@ -1,6 +1,6 @@
 {
 	"name": "@azure-net/cli",
-	"version": "5.0.0-1",
+	"version": "5.0.0-3",
 	"type": "module",
 	"bin": {
 		"azure-net": "bin/azure-net.js"
