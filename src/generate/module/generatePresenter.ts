@@ -142,6 +142,7 @@ const isPrimitive = (typeName: string): boolean => PRIMITIVE_TYPES.has(String(ty
 
 const normalizeTypeImports = (types: string[]): string[] => Array.from(new Set(types.filter((typeName) => !isPrimitive(typeName))));
 const isPathParamName = (name: string): boolean => name === 'pathParam' || name === 'path';
+const toTypeFileName = (typeName: string): string => String(typeName ?? '').replace(/^I/, '') || 'Type';
 
 const buildMethodInvocation = (
 	method: RepositoryMethod & { httpMethod: string },
@@ -184,6 +185,46 @@ const getApplicationProviderFile = async (contextName: string): Promise<string |
 		const candidate = files.find((item) => item.endsWith('.ts') && item !== 'index.ts');
 		return candidate ? path.join(providersPath, candidate) : null;
 	}
+};
+
+const resolveDomainInterfaceFile = async ({
+	contextName,
+	domainName,
+	interfaceName
+}: {
+	contextName: string;
+	domainName: string;
+	interfaceName: string;
+}): Promise<string | null> => {
+	const portsPath = path.join(process.cwd(), 'src', 'app', contextName, 'layers', 'domain', domainName, 'ports');
+	const preferredPath = path.join(portsPath, `${toTypeFileName(interfaceName)}.ts`);
+	const legacyPath = path.join(portsPath, `${interfaceName}.ts`);
+
+	for (const candidate of [preferredPath, legacyPath]) {
+		try {
+			await fs.access(candidate);
+			return candidate;
+		} catch {
+			// Try the next candidate.
+		}
+	}
+
+	try {
+		const files = await fs.readdir(portsPath);
+		for (const fileName of files) {
+			if (!fileName.endsWith('.ts') || fileName === 'index.ts') continue;
+			const candidate = path.join(portsPath, fileName);
+			const content = await fs.readFile(candidate, 'utf-8');
+			const escapedName = interfaceName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+			if (new RegExp(`export\\s+interface\\s+${escapedName}\\b`).test(content)) {
+				return candidate;
+			}
+		}
+	} catch {
+		return null;
+	}
+
+	return null;
 };
 
 type GeneratePresenterOptions = {
@@ -263,17 +304,27 @@ export default async function generatePresenter(options: GeneratePresenterOption
 	}
 
 	const repositoryHttpMethods = parseRepositoryHttpMethods(repositoryInfo.content);
-	const domainPortsInterfacePath = path.join(
-		process.cwd(),
-		'src',
-		'app',
+	const domainPortsInterfacePath = await resolveDomainInterfaceFile({
 		contextName,
-		'layers',
-		'domain',
-		useCasesInfo.domainName,
-		'ports',
-		`${useCasesInfo.repositoryInterfaceName}.ts`
-	);
+		domainName: useCasesInfo.domainName,
+		interfaceName: useCasesInfo.repositoryInterfaceName
+	});
+	if (!domainPortsInterfacePath) {
+		console.error(
+			`❌ Repository interface "${useCasesInfo.repositoryInterfaceName}" was not found in ${path.join(
+				process.cwd(),
+				'src',
+				'app',
+				contextName,
+				'layers',
+				'domain',
+				useCasesInfo.domainName,
+				'ports'
+			)}`
+		);
+		process.exitCode = 1;
+		return;
+	}
 	const repositoryInterfaceContent = await fs.readFile(domainPortsInterfacePath, 'utf-8');
 	const repositoryMethods = parseRepositoryInterfaceMethods(repositoryInterfaceContent).filter((method) =>
 		useCasesInfo.methods.includes(method.name)

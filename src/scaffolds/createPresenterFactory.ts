@@ -10,9 +10,9 @@ type ConfigPath = 'ts' | 'js';
 
 const createPresenterFactoryTemplate = (
 	factoryName: string
-): string => `import { createErrorHandler, createAsyncHelpers, createPresenterFactory } from '@azure-net/kit/delivery';
+): string => `import { createAsyncHelpers, createPresenterFactory } from '@azure-net/kit/delivery';
 
-export const AsyncHelpers = createAsyncHelpers({ handler: createErrorHandler() });
+export const AsyncHelpers = createAsyncHelpers();
 
 export const ${factoryName} = createPresenterFactory({ ...AsyncHelpers });
 `;
