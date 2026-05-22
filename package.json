@@ -5,6 +5,12 @@
 	"bin": {
 		"azure-net": "bin/azure-net.js"
 	},
+	"license": "MIT",
+	"author": "Pixel1917",
+	"publishConfig": {
+		"access": "public",
+		"registry": "https://registry.npmjs.org/"
+	},
 	"peerDependencies": {
 		"@azure-net/kit": ">=5.0.0"
 	},
