@@ -209,6 +209,14 @@ generateCommand
 		await handler();
 	});
 
+generateCommand
+	.command('routes')
+	.description('Generate typed SvelteKit routes list')
+	.action(async () => {
+		const handler = (await import('../src/generate/routes/generateRoutes.js')).default;
+		await handler();
+	});
+
 checkCommand
 	.command('presenter-names')
 	.description('Check duplicate presenter names in src')

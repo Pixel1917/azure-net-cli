@@ -9,6 +9,7 @@ export type AzureNetConfig = {
 	packageManager?: string;
 	defaultSchemaFactory?: string;
 	defaultPresenterFactory?: string;
+	groupRoutesFunc?: unknown;
 	[key: string]: unknown;
 };
 

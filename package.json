@@ -1,12 +1,12 @@
 {
 	"name": "@azure-net/cli",
-	"version": "5.0.1",
+	"version": "5.1.0",
 	"type": "module",
 	"bin": {
 		"azure-net": "bin/azure-net.js"
 	},
 	"peerDependencies": {
-		"@azure-net/kit": "^4.0.0"
+		"@azure-net/kit": ">=5.0.0"
 	},
 	"dependencies": {
 		"commander": "^11",
