@@ -212,14 +212,7 @@ const createGeneratedFile = (groups: Map<string, RouteRecord[]>): string => {
 		lines.push('');
 	}
 
-	lines.push('export const routeGroups = {');
-	lines.push(
-		...groupEntries.map((group, index) => `\t'${group.groupName}': ${group.variableName}${index === groupEntries.length - 1 ? '' : ','}`)
-	);
-	lines.push('} as const;');
-	lines.push('');
 	lines.push('export type Route = (typeof routes)[number];');
-	lines.push('export type RouteGroupName = keyof typeof routeGroups;');
 	lines.push('');
 
 	return `${lines.join('\n')}\n`;
