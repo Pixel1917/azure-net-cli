@@ -1,3 +1,4 @@
+import { updateDefaultFactoryConfig } from './updateDefaultFactoryConfig.js';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
@@ -42,38 +43,6 @@ const resolveConfigFile = (cwd: string): { filepath: string; type: ConfigPath; e
 	return { filepath: tsPath, type: 'ts', exists: false, content: '' };
 };
 
-const buildDefaultSchemaFactoryConfigEntry = (factoryName: string): string => {
-	return `defaultSchemaFactory: '${factoryName}'`;
-};
-
-const upsertDefaultSchemaFactoryConfig = (content: string, factoryName: string): string => {
-	const hasExportDefaultObject = /export\s+default\s*\{[\s\S]*\}\s*;?/.test(content);
-	const defaultFactoryEntry = buildDefaultSchemaFactoryConfigEntry(factoryName);
-
-	if (!hasExportDefaultObject) {
-		return `export default {\n\t${defaultFactoryEntry}\n};\n`;
-	}
-
-	let nextContent = content;
-
-	if (/defaultSchemaFactory\s*:/.test(nextContent)) {
-		nextContent = nextContent.replace(/defaultSchemaFactory\s*:\s*(\{[\s\S]*?\n\s*\}|['"`][^'"`]+['"`])/m, defaultFactoryEntry);
-	} else if (/defaultSchema\s*:/.test(nextContent)) {
-		nextContent = nextContent.replace(/defaultSchema\s*:\s*(\{[\s\S]*?\n\s*\}|['"`][^'"`]+['"`])/m, defaultFactoryEntry);
-	} else {
-		nextContent = nextContent.replace(/export\s+default\s*\{([\s\S]*)\}\s*;?/, (_full, body: string) => {
-			const trimmedRight = body.replace(/\s*$/, '');
-			if (!trimmedRight.length) {
-				return `export default {\n\t${defaultFactoryEntry}\n};`;
-			}
-
-			const withComma = trimmedRight.endsWith(',') ? trimmedRight : `${trimmedRight},`;
-			return `export default {${withComma}\n\t${defaultFactoryEntry}\n};`;
-		});
-	}
-	return nextContent;
-};
-
 export default async function createCoreSchema(): Promise<void> {
 	const { schemaFactoryNameRaw } = await prompts({
 		type: 'text',
@@ -100,7 +69,7 @@ export default async function createCoreSchema(): Promise<void> {
 	const messagesImportName = resolvePresetImportName(selectedPreset);
 	const { sharedContext } = await getSharedState();
 	const coreSchemaPath = getFoundationConstructPath(sharedContext.name, 'schema');
-	const customRulesPath = path.join(coreSchemaPath, 'custom-rules');
+	const customRulesPath = path.join(coreSchemaPath, 'CustomRules');
 	const filePath = path.join(coreSchemaPath, `${schemaFactoryName}.ts`);
 
 	await fs.mkdir(coreSchemaPath, { recursive: true });
@@ -124,7 +93,7 @@ export default async function createCoreSchema(): Promise<void> {
 	if (!useAsDefault) return;
 
 	const config = resolveConfigFile(process.cwd());
-	const nextContent = upsertDefaultSchemaFactoryConfig(config.content, schemaFactoryName);
+	const nextContent = updateDefaultFactoryConfig(config.content, 'defaultSchemaFactory', schemaFactoryName);
 	await fs.writeFile(config.filepath, nextContent, 'utf-8');
 	console.log(`✅ Default schema factory saved to ${path.basename(config.filepath)}`);
 }

@@ -15,7 +15,7 @@ type GraphIssue = {
 };
 
 const TARGET_EXTENSIONS = new Set(['.ts', '.js']);
-const IGNORED_DIRS = new Set(['node_modules', 'dist', '.svelte-kit', '.git']);
+const IGNORED_DIRS = new Set(['.backup', 'node_modules', 'dist', '.svelte-kit', '.git']);
 
 const toPosixPath = (value: string): string => value.split(path.sep).join('/');
 
@@ -88,7 +88,7 @@ const extractDependsOn = (configBlock: string): string[] => {
 
 const parseProviderGraphFromFile = (content: string, filePath: string): ProviderNode[] => {
 	const nodes: ProviderNode[] = [];
-	const token = 'createBoundaryProvider(';
+	const token = 'CreateDiContainer(';
 	let fromIndex = 0;
 
 	while (fromIndex < content.length) {
@@ -186,7 +186,7 @@ export default async function checkProviderGraph(): Promise<void> {
 	}
 
 	if (!providers.length) {
-		console.log('✅ No createBoundaryProvider declarations found.');
+		console.log('✅ No CreateDiContainer declarations found.');
 		return;
 	}
 

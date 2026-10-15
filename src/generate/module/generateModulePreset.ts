@@ -1,8 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import prompts from 'prompts';
-import { toKebabCase, toPascalCase } from '../../utils/contextUtils.js';
-import { updateIndexTs, writeIfNotExists } from '../../utils/fileUtils.js';
+import { toPascalCase } from '../../utils/contextUtils.js';
+import { appendBarrelExports, updateIndexTs, writeIfNotExists } from '../../utils/fileUtils.js';
 import generatePresenter from './generatePresenter.js';
 import {
 	buildRepositoryContent,
@@ -11,14 +11,13 @@ import {
 	getConfigState,
 	getRepositoryMeta,
 	resolveContextAlias,
-	resolveDatasourcesPath,
 	resolveDomainRootPath,
 	resolveRepositoriesPath,
 	resolveSharedDatasourcesPath,
 	selectContext,
+	printApplicationProviderWiring,
 	writeRepositoryInterface
 } from './repositoryModuleShared.js';
-import { getFoundationConstructImportPath } from '../../utils/sharedFoundation.js';
 
 type DatasourceDescriptor = { name: string; importPath: string };
 
@@ -26,9 +25,9 @@ type PresetMethod = {
 	name: string;
 	httpMethod: 'get' | 'post' | 'put' | 'delete';
 	route: string;
-	response: { kind: 'domain' | 'primitive'; type: string; layer: 'model' | 'ports' | null };
-	queryType: { name: string; layer: 'ports' | 'model' } | null;
-	bodyType: { name: string; layer: 'ports' | 'model' } | null;
+	response: { kind: 'domain' | 'primitive'; type: string; layer: 'Entities' | 'Ports' | null };
+	queryType: { name: string; layer: 'Ports' | 'Entities' } | null;
+	bodyType: { name: string; layer: 'Ports' | 'Entities' } | null;
 	pathParamType: 'string' | 'number' | null;
 };
 
@@ -42,7 +41,7 @@ const createInterfaceContent = (interfaceName: string): string => `export interf
 const writeDomainIndexes = async (domainPath: string, modelPath: string, portsPath: string): Promise<void> => {
 	await updateIndexTs(modelPath);
 	await updateIndexTs(portsPath);
-	await fs.writeFile(path.join(domainPath, 'index.ts'), `export * from './model';\nexport * from './ports';\n`, 'utf-8');
+	await appendBarrelExports(path.join(domainPath, 'index.ts'), ['./Entities', './Ports', './Enums']);
 };
 
 const ensureDomainScaffold = async ({
@@ -55,8 +54,8 @@ const ensureDomainScaffold = async ({
 	domainName: string;
 }): Promise<{ domainPath: string; modelPath: string; portsPath: string }> => {
 	const domainPath = resolveDomainRootPath(contextName, domainName);
-	const modelPath = path.join(domainPath, 'model');
-	const portsPath = path.join(domainPath, 'ports');
+	const modelPath = path.join(domainPath, 'Entities');
+	const portsPath = path.join(domainPath, 'Ports');
 
 	await fs.mkdir(modelPath, { recursive: true });
 	await fs.mkdir(portsPath, { recursive: true });
@@ -79,34 +78,16 @@ const ensureDomainScaffold = async ({
 		await writeIfNotExists(filePath, createInterfaceContent(interfaceName));
 	}
 
+	await fs.mkdir(path.join(domainPath, 'Enums'), { recursive: true });
+	await updateIndexTs(path.join(domainPath, 'Enums'));
 	await writeDomainIndexes(domainPath, modelPath, portsPath);
 	return { domainPath, modelPath, portsPath };
 };
 
-const resolveDatasourceForPreset = async (contextName: string): Promise<DatasourceDescriptor | null> => {
-	const { contexts, sharedAlias } = await getConfigState();
-	const contextAlias = resolveContextAlias(contexts, contextName);
-
-	const sharedDatasources = await getAvailableTsNames(await resolveSharedDatasourcesPath());
-	const contextDatasources = await getAvailableTsNames(resolveDatasourcesPath(contextName));
-
-	if (sharedDatasources.includes('ApiDatasource')) {
-		return { name: 'ApiDatasource', importPath: getFoundationConstructImportPath(sharedAlias, 'datasource') };
-	}
-
-	if (contextDatasources.includes('ApiDatasource')) {
-		return { name: 'ApiDatasource', importPath: `${contextAlias}/layers/infrastructure/http/datasources` };
-	}
-
-	if (sharedDatasources.length) {
-		return { name: sharedDatasources[0] as string, importPath: getFoundationConstructImportPath(sharedAlias, 'datasource') };
-	}
-
-	if (contextDatasources.length) {
-		return { name: contextDatasources[0] as string, importPath: `${contextAlias}/layers/infrastructure/http/datasources` };
-	}
-
-	return null;
+const resolveDatasourceForPreset = async (): Promise<DatasourceDescriptor | null> => {
+	const names = await getAvailableTsNames(await resolveSharedDatasourcesPath());
+	const name = names.includes('ApiDatasource') ? 'ApiDatasource' : names[0];
+	return name ? { name, importPath: '#platform/Foundation/Datasource' } : null;
 };
 
 const buildPresetMethods = ({
@@ -122,8 +103,8 @@ const buildPresetMethods = ({
 		name: 'collection',
 		httpMethod: 'get',
 		route,
-		response: { kind: 'domain', type: `I${entityNamePascal}CollectionResponse`, layer: 'ports' },
-		queryType: { name: `I${entityNamePascal}CollectionQuery`, layer: 'ports' },
+		response: { kind: 'domain', type: `I${entityNamePascal}CollectionResponse`, layer: 'Ports' },
+		queryType: { name: `I${entityNamePascal}CollectionQuery`, layer: 'Ports' },
 		bodyType: null,
 		pathParamType: null
 	},
@@ -131,7 +112,7 @@ const buildPresetMethods = ({
 		name: 'resource',
 		httpMethod: 'get',
 		route,
-		response: { kind: 'domain', type: `I${entityNamePascal}`, layer: 'model' },
+		response: { kind: 'domain', type: `I${entityNamePascal}`, layer: 'Entities' },
 		queryType: null,
 		bodyType: null,
 		pathParamType
@@ -140,18 +121,18 @@ const buildPresetMethods = ({
 		name: 'create',
 		httpMethod: 'post',
 		route,
-		response: { kind: 'domain', type: `I${entityNamePascal}`, layer: 'model' },
+		response: { kind: 'domain', type: `I${entityNamePascal}`, layer: 'Entities' },
 		queryType: null,
-		bodyType: { name: `I${entityNamePascal}CreateRequest`, layer: 'ports' },
+		bodyType: { name: `I${entityNamePascal}CreateRequest`, layer: 'Ports' },
 		pathParamType: null
 	},
 	{
 		name: 'update',
 		httpMethod: 'put',
 		route,
-		response: { kind: 'domain', type: `I${entityNamePascal}`, layer: 'model' },
+		response: { kind: 'domain', type: `I${entityNamePascal}`, layer: 'Entities' },
 		queryType: null,
-		bodyType: { name: `I${entityNamePascal}UpdateRequest`, layer: 'ports' },
+		bodyType: { name: `I${entityNamePascal}UpdateRequest`, layer: 'Ports' },
 		pathParamType
 	},
 	{
@@ -164,37 +145,6 @@ const buildPresetMethods = ({
 		pathParamType
 	}
 ];
-
-const findProviderFile = async (
-	contextName: string,
-	layerName: 'application' | 'infrastructure',
-	preferredFileName: string
-): Promise<string> => {
-	const providersPath = path.join(process.cwd(), 'src', 'app', contextName, 'layers', layerName, 'providers');
-	const preferredPath = path.join(providersPath, preferredFileName);
-	try {
-		await fs.access(preferredPath);
-		return preferredPath;
-	} catch {
-		try {
-			const files = await fs.readdir(providersPath);
-			const firstTs = files.find((item) => item.endsWith('.ts') && item !== 'index.ts');
-			return firstTs ? path.join(providersPath, firstTs) : preferredPath;
-		} catch {
-			return preferredPath;
-		}
-	}
-};
-
-const parseProviderConstName = async (providerPath: string, fallbackName: string): Promise<string> => {
-	try {
-		const content = await fs.readFile(providerPath, 'utf-8');
-		const match = content.match(/export\s+const\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*createBoundaryProvider/);
-		return match?.[1] ?? fallbackName;
-	} catch {
-		return fallbackName;
-	}
-};
 
 export default async function generateModulePreset(): Promise<void> {
 	const contextName = await selectContext('Select context for preset module:');
@@ -248,13 +198,13 @@ export default async function generateModulePreset(): Promise<void> {
 	}
 
 	const resolvedPathParamType: 'string' | 'number' = pathParamType === 'number' ? 'number' : 'string';
-	const domainName = toKebabCase(entityNamePascal);
+	const domainName = contextName;
 
 	await ensureDomainScaffold({ contextName, entityNamePascal, domainName });
 
-	const datasource = await resolveDatasourceForPreset(contextName);
+	const datasource = await resolveDatasourceForPreset();
 	if (!datasource) {
-		console.error('❌ No datasource found in shared foundation or selected context. Create datasource first.');
+		console.error('❌ No datasource found in Platform/Foundation/Datasource. Create datasource first.');
 		process.exitCode = 1;
 		return;
 	}
@@ -304,18 +254,7 @@ export default async function generateModulePreset(): Promise<void> {
 		repositoryName: meta.className
 	});
 
-	const infrastructureProviderPath = await findProviderFile(contextName, 'infrastructure', 'InfrastructureProvider.ts');
-	const applicationProviderPath = await findProviderFile(contextName, 'application', 'ApplicationProvider.ts');
-	const infrastructureProviderName = await parseProviderConstName(infrastructureProviderPath, 'InfrastructureProvider');
-
-	console.log('\n⚠️ Manual provider registration is required before presenter generation.');
-	console.log(`Infrastructure provider file: ${infrastructureProviderPath}`);
-	console.log(`Application provider file: ${applicationProviderPath}`);
-	console.log('\nSuggested register snippets:');
-	console.log(`- Infrastructure register: ${meta.className}: () => new ${meta.className}(/* datasource */),`);
-	console.log(
-		`- Application register: ${meta.useCasesClassName}: () => new ${meta.useCasesClassName}(${infrastructureProviderName}().${meta.className}),`
-	);
+	printApplicationProviderWiring(contextName, meta.className, datasource.name);
 
 	const { readyAnswer } = await prompts({
 		type: 'text',

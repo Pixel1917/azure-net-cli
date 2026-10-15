@@ -36,13 +36,15 @@ const runTask = async (task: CheckTask): Promise<void> => {
 };
 
 export default async function checkInternal(): Promise<void> {
-	try {
-		for (const task of tasks) {
+	let failed = false;
+	for (const task of tasks) {
+		try {
 			await runTask(task);
+		} catch (error) {
+			failed = true;
+			console.error(error instanceof Error ? error.message : String(error));
 		}
-		console.log('\n✅ Internal checks passed.');
-	} catch (error) {
-		console.error(`\n❌ Internal checks failed: ${error instanceof Error ? error.message : String(error)}`);
-		process.exitCode = 1;
 	}
+	process.exitCode = failed ? 1 : 0;
+	console[failed ? 'error' : 'log'](failed ? 'Internal checks failed.' : 'Internal checks passed.');
 }

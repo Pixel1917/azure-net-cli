@@ -2,7 +2,6 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import prompts from 'prompts';
 import { loadUserConfig } from '../../utils/loadConfig.js';
-import { getSharedContextRootPath, getSharedState } from '../../utils/sharedFoundation.js';
 import { toCamelCase } from '../../utils/contextUtils.js';
 
 type RouteGroupingMode = 'root-groups' | 'config-function' | 'none';
@@ -24,7 +23,7 @@ export type RouteGenerationMeta = {
 type RouteRecord = RouteGenerationMeta;
 type RouteGroupResolver = (route: RouteGenerationMeta) => string | null | undefined;
 
-const ROUTES_DIR = path.join(process.cwd(), 'src', 'routes');
+const getRoutesDir = (): string => path.join(process.cwd(), 'src', 'routes');
 const ROUTE_FILE_PATTERN = /^\+(page|server)(?:\.server)?\.(?:svelte|ts|js)$/;
 const PAGE_FILE_PATTERN = /^\+page(?:\.server)?\.(?:svelte|ts|js)$/;
 const SERVER_FILE_PATTERN = /^\+server\.(?:ts|js)$/;
@@ -116,7 +115,7 @@ const collectRoutes = async (
 			routes.push({
 				url,
 				routeDir: dir,
-				relativeDir: path.relative(ROUTES_DIR, dir) || '.',
+				relativeDir: path.relative(getRoutesDir(), dir) || '.',
 				segments,
 				dynamicParams: routeVariants.dynamicParams,
 				rootGroup,
@@ -251,21 +250,20 @@ export default async function generateRoutes(): Promise<void> {
 	const mode = await selectGroupingMode();
 	if (!mode) return;
 
-	const { sharedContext } = await getSharedState();
 	const resolver = mode === 'config-function' ? await getConfigRouteGroupResolver() : undefined;
 	if (mode === 'config-function' && !resolver) {
 		process.exitCode = 1;
 		return;
 	}
 
-	const routes = await collectRoutes(ROUTES_DIR);
+	const routes = await collectRoutes(getRoutesDir());
 	if (!routes.length) {
 		console.warn('⚠️ No SvelteKit routes found in src/routes');
 		return;
 	}
 
 	const groups = createGroupMap(routes, mode, resolver ?? undefined);
-	const outputDir = path.join(getSharedContextRootPath(sharedContext.name), 'runtime', 'routes');
+	const outputDir = path.join(process.cwd(), 'src', 'app', 'Platform', 'Bootstrap', 'Routes');
 	const outputFile = path.join(outputDir, 'index.ts');
 
 	await fs.mkdir(outputDir, { recursive: true });

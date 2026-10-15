@@ -9,7 +9,7 @@ type ProviderOccurrence = {
 };
 
 const TARGET_EXTENSIONS = new Set(['.ts', '.js', '.svelte']);
-const IGNORED_DIRS = new Set(['node_modules', 'dist', '.svelte-kit', '.git']);
+const IGNORED_DIRS = new Set(['.backup', 'node_modules', 'dist', '.svelte-kit', '.git']);
 const IMPORT_PATTERN = 'import\\s*\\{([^}]+)\\}\\s*from\\s*[\'"]([^\'"]+)[\'"]';
 const CALL_PATTERN = '\\b([A-Za-z_$][A-Za-z0-9_$]*)\\s*\\(\\s*([\'"`])([^\'"`]*)\\2';
 
@@ -77,13 +77,13 @@ const getLineByIndex = (content: string, index: number): number => {
 
 const extractBoundaryFactoryAliases = (content: string): Set<string> => {
 	const importRegex = new RegExp(IMPORT_PATTERN, 'g');
-	const aliases = new Set<string>(['createBoundaryProvider']);
+	const aliases = new Set<string>(['CreateDiContainer']);
 	let match: RegExpExecArray | null;
 
 	while ((match = importRegex.exec(content)) !== null) {
 		const rawImports = match[1];
 		if (!rawImports) continue;
-		for (const alias of parseImportAliases(rawImports, 'createBoundaryProvider')) {
+		for (const alias of parseImportAliases(rawImports, 'CreateDiContainer')) {
 			aliases.add(alias);
 		}
 	}

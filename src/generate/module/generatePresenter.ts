@@ -1,7 +1,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import prompts from 'prompts';
-import { toKebabCase, toPascalCase } from '../../utils/contextUtils.js';
+import ts from 'typescript';
+import { selectWorkspace, selectScope } from '../../utils/architecture.js';
+import { toPascalCase } from '../../utils/contextUtils.js';
 import { writeIfNotExists, updateIndexTs } from '../../utils/fileUtils.js';
 import { getConfigState, resolveContextAlias, selectContext } from './repositoryModuleShared.js';
 import { loadUserConfig } from '../../utils/loadConfig.js';
@@ -10,66 +12,119 @@ import { getFoundationConstructImportPath, getFoundationConstructPath, getShared
 type MethodParam = { name: string; type: string };
 type RepositoryMethod = { name: string; params: MethodParam[]; responseType: string };
 type UseCasesInfo = { repositoryInterfaceName: string | null; domainName: string | null; methods: string[] };
-type ProviderInfo = { providerName: string; registeredKeys: string[] };
+type ProviderInfo = { providerName: string; services: Map<string, string> };
 
-const PRIMITIVE_TYPES = new Set(['string', 'number', 'boolean', 'unknown', 'void', 'null', 'undefined', 'bigint', 'symbol', 'never']);
-
-const parseProviderInfo = (content: string): ProviderInfo => {
-	const providerNameMatch = content.match(/export\s+const\s+(\w+)\s*=\s*createBoundaryProvider/);
-	const providerName = providerNameMatch?.[1] ?? 'ApplicationProvider';
-
-	const registerMatch = content.match(/register\s*:\s*\([^)]*\)\s*=>\s*\(\{([\s\S]*?)\}\)/m);
-	const registerBody = registerMatch?.[1] ?? '';
-	const keys: string[] = [];
-	const keyRegex = /([A-Za-z_]\w*)\s*:/g;
-	let keyMatch: RegExpExecArray | null;
-	while ((keyMatch = keyRegex.exec(registerBody)) !== null) {
-		const key = keyMatch[1];
-		if (key) keys.push(key);
+export const parseProviderInfo = (content: string): ProviderInfo => {
+	const source = ts.createSourceFile('ApplicationProvider.ts', content, ts.ScriptTarget.Latest, true);
+	const services = new Map<string, string>();
+	const aliases = new Map<string, string>();
+	for (const statement of source.statements) {
+		if (
+			ts.isImportDeclaration(statement) &&
+			statement.importClause?.namedBindings &&
+			ts.isNamedImports(statement.importClause.namedBindings)
+		) {
+			for (const specifier of statement.importClause.namedBindings.elements)
+				aliases.set(specifier.name.text, specifier.propertyName?.text ?? specifier.name.text);
+		}
 	}
-
-	return { providerName, registeredKeys: keys };
+	const unwrap = (expression: ts.Expression): ts.Expression =>
+		ts.isParenthesizedExpression(expression) ? unwrap(expression.expression) : expression;
+	const returnValues = (fn: ts.ArrowFunction | ts.FunctionExpression): ts.Expression[] => {
+		if (!ts.isBlock(fn.body)) return [unwrap(fn.body)];
+		const values: ts.Expression[] = [];
+		const visit = (node: ts.Node) => {
+			if (ts.isReturnStatement(node) && node.expression) values.push(unwrap(node.expression));
+			else if (!ts.isFunctionLike(node)) ts.forEachChild(node, visit);
+		};
+		ts.forEachChild(fn.body, visit);
+		return values;
+	};
+	const visit = (node: ts.Node) => {
+		if (ts.isPropertyAssignment(node) && node.name.getText(source).replace(/['"]/g, '') === 'register') {
+			const register = unwrap(node.initializer);
+			if (ts.isArrowFunction(register) || ts.isFunctionExpression(register)) {
+				for (const value of returnValues(register)) {
+					if (!ts.isObjectLiteralExpression(value)) continue;
+					for (const property of value.properties) {
+						if (!ts.isPropertyAssignment(property)) continue;
+						const factory = unwrap(property.initializer);
+						if (!ts.isArrowFunction(factory) && !ts.isFunctionExpression(factory)) continue;
+						for (const instance of returnValues(factory)) {
+							if (ts.isNewExpression(instance) && ts.isIdentifier(instance.expression)) {
+								services.set(
+									property.name.getText(source).replace(/['"]/g, ''),
+									aliases.get(instance.expression.text) ?? instance.expression.text
+								);
+							}
+						}
+					}
+				}
+			}
+		}
+		ts.forEachChild(node, visit);
+	};
+	visit(source);
+	return { providerName: 'ApplicationProvider', services };
 };
 
-const parseUseCasesInfo = (content: string): UseCasesInfo => {
-	const interfaceImport = content.match(/import\s+type\s+\{\s*(\w+)\s*\}\s+from\s+['"]([^'"]+)['"]/);
-	const repositoryInterfaceName = interfaceImport?.[1] ?? null;
-	const domainImportPath = interfaceImport?.[2] ?? null;
-	const domainNameMatch = domainImportPath?.match(/\/layers\/domain\/([^'"]+)$/);
-	const domainName = domainNameMatch?.[1] ?? null;
-
+export const parseUseCasesInfo = (content: string): UseCasesInfo => {
+	const source = ts.createSourceFile('UseCases.ts', content, ts.ScriptTarget.Latest, true);
+	const imported = new Map<string, string>();
+	for (const statement of source.statements) {
+		if (
+			!ts.isImportDeclaration(statement) ||
+			!ts.isStringLiteral(statement.moduleSpecifier) ||
+			!statement.moduleSpecifier.text.includes('/Domain')
+		)
+			continue;
+		const bindings = statement.importClause?.namedBindings;
+		if (bindings && ts.isNamedImports(bindings))
+			for (const item of bindings.elements) imported.set(item.name.text, item.propertyName?.text ?? item.name.text);
+	}
 	const methods: string[] = [];
-	const declareRegex = /declare\s+(\w+)\s*:\s*\w+\['\w+'\];/g;
-	let declareMatch: RegExpExecArray | null;
-	while ((declareMatch = declareRegex.exec(content)) !== null) {
-		const methodName = declareMatch[1];
-		if (methodName) methods.push(methodName);
-	}
-
-	return { repositoryInterfaceName, domainName, methods };
+	let repositoryInterfaceName: string | null = null;
+	for (const statement of source.statements)
+		if (ts.isClassDeclaration(statement)) {
+			for (const member of statement.members) {
+				if (!ts.isPropertyDeclaration(member) || !member.type || !ts.isIndexedAccessTypeNode(member.type)) continue;
+				const owner = member.type.objectType.getText(source);
+				if (!imported.has(owner)) continue;
+				repositoryInterfaceName = imported.get(owner)!;
+				methods.push(member.name.getText(source));
+			}
+			if (!repositoryInterfaceName)
+				for (const member of statement.members)
+					if (ts.isConstructorDeclaration(member)) {
+						for (const parameter of member.parameters) {
+							const owner = parameter.type?.getText(source);
+							if (owner && imported.has(owner)) repositoryInterfaceName = imported.get(owner)!;
+						}
+					}
+		}
+	return { repositoryInterfaceName, domainName: repositoryInterfaceName ? 'Domain' : null, methods };
 };
 
-const parseRepositoryInterfaceMethods = (content: string): RepositoryMethod[] => {
+export const parseRepositoryInterfaceMethods = (content: string, interfaceName?: string): RepositoryMethod[] => {
+	const source = ts.createSourceFile('Repository.ts', content, ts.ScriptTarget.Latest, true);
 	const methods: RepositoryMethod[] = [];
-	const regex = /(\w+)\(([^)]*)\)\s*:\s*Promise<([^>]+)>;/g;
-	let match: RegExpExecArray | null;
-	while ((match = regex.exec(content)) !== null) {
-		const methodName = match[1];
-		const paramsChunk = match[2];
-		const responseTypeChunk = match[3];
-		if (!methodName || paramsChunk === undefined || !responseTypeChunk) continue;
-		const paramsRaw = paramsChunk.trim();
-		const params: MethodParam[] = paramsRaw
-			? paramsRaw.split(',').map((part) => {
-					const [name, ...typeParts] = part.trim().split(':');
-					return { name: String(name ?? '').trim(), type: typeParts.join(':').trim() };
-				})
-			: [];
-		methods.push({
-			name: methodName,
-			params,
-			responseType: responseTypeChunk.trim()
-		});
+	for (const statement of source.statements) {
+		if (!ts.isInterfaceDeclaration(statement) || (interfaceName && statement.name.text !== interfaceName)) continue;
+		for (const member of statement.members) {
+			if (!ts.isMethodSignature(member) || !member.type) continue;
+			const result =
+				ts.isTypeReferenceNode(member.type) && member.type.typeName.getText(source) === 'Promise'
+					? member.type.typeArguments?.[0]
+					: member.type;
+			methods.push({
+				name: member.name.getText(source),
+				params: member.parameters.map((parameter) => ({
+					name: parameter.name.getText(source) + (parameter.questionToken ? '?' : ''),
+					type: parameter.type?.getText(source) ?? 'unknown'
+				})),
+				responseType: result?.getText(source) ?? 'unknown'
+			});
+		}
 	}
 	return methods;
 };
@@ -78,7 +133,7 @@ const findRepositoryByInterface = async (
 	contextName: string,
 	repositoryInterfaceName: string
 ): Promise<{ filePath: string; content: string } | null> => {
-	const repositoriesPath = path.join(process.cwd(), 'src', 'app', contextName, 'layers', 'infrastructure', 'http', 'repositories');
+	const repositoriesPath = path.join(process.cwd(), 'src', 'app', 'Contexts', contextName, 'Infrastructure', 'Repositories');
 	try {
 		const files = await fs.readdir(repositoriesPath);
 		for (const fileName of files) {
@@ -95,29 +150,28 @@ const findRepositoryByInterface = async (
 	}
 };
 
-const parseRepositoryHttpMethods = (content: string): Map<string, string> => {
+export const parseRepositoryHttpMethods = (content: string): Map<string, string> => {
+	const source = ts.createSourceFile('Repository.ts', content, ts.ScriptTarget.Latest, true);
 	const methods = new Map<string, string>();
-	const regex = /public\s+async\s+(\w+)\([^)]*\)\s*\{([\s\S]*?)\n\t\}/g;
-	let match: RegExpExecArray | null;
-	while ((match = regex.exec(content)) !== null) {
-		const methodName = match[1];
-		if (!methodName) continue;
-		const body = match[2] ?? '';
-		const httpMatch = body.match(/http\.(get|post|put|delete|head|options|patch)\(/);
-		if (httpMatch?.[1]) methods.set(methodName, httpMatch[1]);
-	}
+	for (const statement of source.statements)
+		if (ts.isClassDeclaration(statement)) {
+			for (const member of statement.members)
+				if (ts.isMethodDeclaration(member) && member.body) {
+					const visit = (node: ts.Node): void => {
+						if (
+							ts.isCallExpression(node) &&
+							ts.isPropertyAccessExpression(node.expression) &&
+							node.expression.expression.getText(source) === 'http' &&
+							/^(get|post|put|delete|head|options|patch)$/.test(node.expression.name.text)
+						) {
+							methods.set(member.name.getText(source), node.expression.name.text);
+						}
+						ts.forEachChild(node, visit);
+					};
+					visit(member.body);
+				}
+		}
 	return methods;
-};
-
-const getSharedPresenterFactories = async (): Promise<string[]> => {
-	const { sharedContext } = await getSharedState();
-	const presenterPath = getFoundationConstructPath(sharedContext.name, 'presenter');
-	try {
-		const files = await fs.readdir(presenterPath);
-		return files.filter((item) => item.endsWith('.ts') && item !== 'index.ts').map((item) => item.replace(/\.ts$/, ''));
-	} catch {
-		return [];
-	}
 };
 
 const getSharedSchemaFactories = async (): Promise<string[]> => {
@@ -138,10 +192,24 @@ const normalizePresenterName = (rawName: string | undefined, fallbackUseCasesNam
 	return normalized.endsWith('Presenter') ? normalized : `${normalized}Presenter`;
 };
 
-const isPrimitive = (typeName: string): boolean => PRIMITIVE_TYPES.has(String(typeName ?? '').trim());
-
-const normalizeTypeImports = (types: string[]): string[] => Array.from(new Set(types.filter((typeName) => !isPrimitive(typeName))));
-const isPathParamName = (name: string): boolean => name === 'pathParam' || name === 'path';
+export const normalizeTypeImports = (types: string[]): string[] => {
+	const names = new Set<string>();
+	const source = ts.createSourceFile(
+		'Types.ts',
+		types.map((type, index) => 'type T' + index + ' = ' + type + ';').join('\n'),
+		ts.ScriptTarget.Latest,
+		true
+	);
+	const visit = (node: ts.Node): void => {
+		// Domain declarations use I/T prefixes. Built-in generics and primitive keywords need no import.
+		if (ts.isTypeReferenceNode(node) && ts.isIdentifier(node.typeName) && /^[IT][A-Z]/.test(node.typeName.text))
+			names.add(node.typeName.text);
+		ts.forEachChild(node, visit);
+	};
+	visit(source);
+	return [...names];
+};
+const isPathParamName = (name: string): boolean => name.replace(/\?$/, '') === 'pathParam' || name.replace(/\?$/, '') === 'path';
 const toTypeFileName = (typeName: string): string => String(typeName ?? '').replace(/^I/, '') || 'Type';
 
 const buildMethodInvocation = (
@@ -150,19 +218,19 @@ const buildMethodInvocation = (
 	schemaByMethod: Map<string, { constName: string }>
 ): string => {
 	const paramsSignature = method.params.map((item) => `${item.name}: ${item.type}`).join(', ');
-	const argNames = method.params.map((item) => item.name);
+	const argNames = method.params.map((item) => item.name.replace(/\?$/, ''));
 	const requestParam = method.params.find((item) => !isPathParamName(item.name));
 	const schemaInfo = schemaByMethod.get(method.name) ?? null;
 	const args = argNames.map((argName) => {
-		if (schemaInfo && requestParam && argName === requestParam.name) {
-			return `${schemaInfo.constName}.from(${argName}).json()`;
+		if (schemaInfo && requestParam && argName === requestParam.name.replace(/\?$/, '')) {
+			return `${schemaInfo.constName}.from(${argName}).toJson()`;
 		}
 		return argName;
 	});
 
 	const httpMethod = method.httpMethod;
 	if (httpMethod === 'get' || httpMethod === 'head' || httpMethod === 'options') {
-		return `\tconst ${method.name} = (${paramsSignature}) => createAsyncResource(() => ${useCasesName}.${method.name}(${args.join(', ')}));`;
+		return `\t${method.name} = (${paramsSignature}) => createAsyncResource(() => ${useCasesName}.${method.name}(${args.join(', ')}));`;
 	}
 
 	const responseType = method.responseType;
@@ -171,32 +239,28 @@ const buildMethodInvocation = (
 	if (requestType) generic += `, ${requestType}`;
 	generic += '>';
 
-	return `\tconst ${method.name} = async (${paramsSignature}) =>\n\t\tawait createAsyncAction${generic}(() => ${useCasesName}.${method.name}(${args.join(', ')}));`;
+	return `\t${method.name} = (${paramsSignature}) => createAsyncAction${generic}(() => ${useCasesName}.${method.name}(${args.join(', ')}));`;
 };
 
-const getApplicationProviderFile = async (contextName: string): Promise<string | null> => {
-	const providersPath = path.join(process.cwd(), 'src', 'app', contextName, 'layers', 'application', 'providers');
-	const targetPath = path.join(providersPath, 'ApplicationProvider.ts');
+const getApplicationProviderFile = async (): Promise<string | null> => {
+	const targetPath = path.join(process.cwd(), 'src/app/Platform/Foundation/DI/ApplicationProvider.ts');
 	try {
 		await fs.access(targetPath);
 		return targetPath;
 	} catch {
-		const files = await fs.readdir(providersPath);
-		const candidate = files.find((item) => item.endsWith('.ts') && item !== 'index.ts');
-		return candidate ? path.join(providersPath, candidate) : null;
+		return null;
 	}
 };
 
 const resolveDomainInterfaceFile = async ({
 	contextName,
-	domainName,
 	interfaceName
 }: {
 	contextName: string;
 	domainName: string;
 	interfaceName: string;
 }): Promise<string | null> => {
-	const portsPath = path.join(process.cwd(), 'src', 'app', contextName, 'layers', 'domain', domainName, 'ports');
+	const portsPath = path.join(process.cwd(), 'src', 'app', 'Contexts', contextName, 'Domain', 'Ports');
 	const preferredPath = path.join(portsPath, `${toTypeFileName(interfaceName)}.ts`);
 	const legacyPath = path.join(portsPath, `${interfaceName}.ts`);
 
@@ -242,7 +306,7 @@ export default async function generatePresenter(options: GeneratePresenterOption
 		return;
 	}
 
-	const appProviderFile = await getApplicationProviderFile(contextName);
+	const appProviderFile = await getApplicationProviderFile();
 	if (!appProviderFile) {
 		console.error('❌ ApplicationProvider file was not found.');
 		process.exitCode = 1;
@@ -252,7 +316,7 @@ export default async function generatePresenter(options: GeneratePresenterOption
 	const appProviderContent = await fs.readFile(appProviderFile, 'utf-8');
 	const providerInfo = parseProviderInfo(appProviderContent);
 
-	const useCasesPath = path.join(process.cwd(), 'src', 'app', contextName, 'layers', 'application', 'use-cases');
+	const useCasesPath = path.join(process.cwd(), 'src', 'app', 'Contexts', contextName, 'Application', 'UseCases');
 	let useCasesFiles: string[] = [];
 	try {
 		useCasesFiles = (await fs.readdir(useCasesPath))
@@ -262,7 +326,7 @@ export default async function generatePresenter(options: GeneratePresenterOption
 		// ignore
 	}
 
-	const registeredUseCases = useCasesFiles.filter((item) => providerInfo.registeredKeys.includes(item));
+	const registeredUseCases = useCasesFiles.filter((item) => [...providerInfo.services.values()].includes(item));
 	if (!registeredUseCases.length) {
 		console.error('❌ No registered UseCases were found in ApplicationProvider register().');
 		process.exitCode = 1;
@@ -285,6 +349,19 @@ export default async function generatePresenter(options: GeneratePresenterOption
 		console.error(`❌ UseCases "${useCasesName}" is not registered in ApplicationProvider.`);
 		process.exitCode = 1;
 		return;
+	}
+
+	const serviceKeys = [...providerInfo.services.entries()].filter(([, className]) => className === useCasesName).map(([key]) => key);
+	let serviceName = serviceKeys[0]!;
+	if (serviceKeys.length > 1) {
+		const answer = await prompts({
+			type: 'select',
+			name: 'service',
+			message: 'Select registered service:',
+			choices: serviceKeys.map((key) => ({ title: key, value: key }))
+		});
+		if (!answer.service) return;
+		serviceName = String(answer.service);
 	}
 
 	const useCasesFile = path.join(useCasesPath, `${useCasesName}.ts`);
@@ -315,19 +392,18 @@ export default async function generatePresenter(options: GeneratePresenterOption
 				process.cwd(),
 				'src',
 				'app',
+				'Contexts',
 				contextName,
-				'layers',
-				'domain',
-				useCasesInfo.domainName,
-				'ports'
+				'Domain',
+				'Ports'
 			)}`
 		);
 		process.exitCode = 1;
 		return;
 	}
 	const repositoryInterfaceContent = await fs.readFile(domainPortsInterfacePath, 'utf-8');
-	const repositoryMethods = parseRepositoryInterfaceMethods(repositoryInterfaceContent).filter((method) =>
-		useCasesInfo.methods.includes(method.name)
+	const repositoryMethods = parseRepositoryInterfaceMethods(repositoryInterfaceContent, useCasesInfo.repositoryInterfaceName).filter(
+		(method) => useCasesInfo.methods.includes(method.name)
 	);
 
 	const { presenterNameRaw } = await prompts({
@@ -337,42 +413,23 @@ export default async function generatePresenter(options: GeneratePresenterOption
 	});
 
 	const presenterName = normalizePresenterName(presenterNameRaw, useCasesName);
-	const presenterFolder = toKebabCase(presenterName.replace(/Presenter$/, ''));
-	const presentationPath = path.join(process.cwd(), 'src', 'app', contextName, 'layers', 'presentation', presenterFolder);
+	const workspace = await selectWorkspace();
+	if (!workspace) return;
+	const scope = await selectScope(workspace);
+	if (!scope) return;
+	const presentationPath = path.join(workspace.path, 'Scopes', scope);
+	try {
+		await fs.access(path.join(presentationPath, `${presenterName}.ts`));
+		console.log('Presenter already exists; not overwritten.');
+		return;
+	} catch {
+		/* new file */
+	}
 	await fs.mkdir(presentationPath, { recursive: true });
 
 	const { contexts, sharedAlias } = await getConfigState();
 	const contextAlias = resolveContextAlias(contexts, contextName);
-	const presenterImportPath = getFoundationConstructImportPath(sharedAlias, 'presenter');
 	const schemaFactoryImportPath = getFoundationConstructImportPath(sharedAlias, 'schema');
-
-	let presenterFactory = String((await loadUserConfig()).defaultPresenterFactory ?? '').trim();
-	let useNativePresenter = false;
-	if (!presenterFactory) {
-		const availableFactories = await getSharedPresenterFactories();
-		const { selectedFactory } = await prompts({
-			type: 'select',
-			name: 'selectedFactory',
-			message: 'Select presenter factory:',
-			choices: [
-				...availableFactories.map((item) => ({ title: item, value: item })),
-				{ title: 'Native createPresenter', value: '__native__' }
-			],
-			initial: 0
-		});
-
-		if (selectedFactory === '__native__') {
-			useNativePresenter = true;
-			presenterFactory = 'createPresenter';
-		} else {
-			presenterFactory = String(selectedFactory ?? '');
-		}
-	}
-
-	if (!presenterFactory) {
-		useNativePresenter = true;
-		presenterFactory = 'createPresenter';
-	}
 
 	const mutationMethods = repositoryMethods.filter((method) => {
 		const httpMethod = repositoryHttpMethods.get(method.name) ?? 'get';
@@ -403,7 +460,7 @@ export default async function generatePresenter(options: GeneratePresenterOption
 				if (!schemaFactory) {
 					const availableSchemas = await getSharedSchemaFactories();
 					if (!availableSchemas.length) {
-						console.error('❌ No schema factories found in shared foundation constructs/schema.');
+						console.error('❌ No schema factories found in Platform/Foundation/Schema.');
 						process.exitCode = 1;
 						return;
 					}
@@ -424,12 +481,12 @@ export default async function generatePresenter(options: GeneratePresenterOption
 
 			const schemaConstName = `${toPascalCase(method.name)}${presenterName}Schema`;
 			const schemaFileName = `${schemaConstName}.ts`;
-			const schemaPath = path.join(presentationPath, 'schema');
+			const schemaPath = path.join(presentationPath, 'Schema');
 			await fs.mkdir(schemaPath, { recursive: true });
 			schemaIndexNeeded = true;
 
 			const schemaContent = `import { ${schemaFactory} } from '${schemaFactoryImportPath}';
-import type { ${requestParam.type} } from '${contextAlias}/layers/domain/${useCasesInfo.domainName}';
+${normalizeTypeImports([requestParam.type]).length ? `import type { ${normalizeTypeImports([requestParam.type]).join(', ')} } from '${contextAlias}/Domain';` : ''}
 
 export const ${schemaConstName} = ${schemaFactory}<${requestParam.type}>()
 \t.rules((rules) => ({}))
@@ -443,7 +500,7 @@ export const ${schemaConstName} = ${schemaFactory}<${requestParam.type}>()
 	}
 
 	if (schemaIndexNeeded) {
-		await updateIndexTs(path.join(presentationPath, 'schema'));
+		await updateIndexTs(path.join(presentationPath, 'Schema'));
 	}
 
 	const hasGetLike = repositoryMethods.some((method) => {
@@ -464,35 +521,32 @@ export const ${schemaConstName} = ${schemaFactory}<${requestParam.type}>()
 	const methodsCode = repositoryMethods
 		.map((method) => {
 			const httpMethod = repositoryHttpMethods.get(method.name) ?? 'get';
-			return buildMethodInvocation({ ...method, httpMethod }, useCasesName, schemaByMethod);
+			return buildMethodInvocation({ ...method, httpMethod }, 'this.useCases', schemaByMethod);
 		})
 		.join('\n\n');
 
-	const factoryImport = useNativePresenter
-		? `import { createPresenter } from '@azure-net/kit/delivery';`
-		: `import { ${presenterFactory} } from '${presenterImportPath}';`;
-
-	const schemaImportLine = schemaImports.length ? `import { ${Array.from(new Set(schemaImports)).join(', ')} } from './schema';` : '';
-	const typeImportLine = typeImports.length
-		? `import type { ${typeImports.join(', ')} } from '${contextAlias}/layers/domain/${useCasesInfo.domainName}';`
-		: '';
-
-	const presenterId = `${toPascalCase(contextName)}${presenterName}`;
-	const presenterContent = `${factoryImport}
-import { ${providerInfo.providerName} } from '${contextAlias}/layers/application/providers';
-${typeImportLine}
+	const schemaImportLine = schemaImports.length ? `import { ${Array.from(new Set(schemaImports)).join(', ')} } from './Schema';` : '';
+	const typeImportLine = typeImports.length ? `import type { ${typeImports.join(', ')} } from '${contextAlias}/Domain';` : '';
+	const presenterContent = `import { RegisterProvider${helperParams ? ', ' + helperParams : ''} } from '@azure-net/kit/delivery';
+import { ApplicationProvider } from '#platform/Foundation/DI';
 ${schemaImportLine}
+import type { ${useCasesName} } from '${contextAlias}/Application/UseCases/${useCasesName}';
+${typeImportLine}
 
-export const ${presenterName} = ${presenterFactory}('${presenterId}', ({ ${helperParams} }) => {
-\tconst { ${useCasesName} } = ${providerInfo.providerName}();
+export class ${presenterName} {
+\tconstructor(private readonly useCases: ${useCasesName}) {}
 
-${methodsCode ? `${methodsCode}\n` : ''}
-\treturn { ${repositoryMethods.map((method) => method.name).join(', ')} };
-});
+${methodsCode}
+}
+
+export const use${presenterName} = RegisterProvider(() => {
+\tconst { ${serviceName} } = ApplicationProvider();
+\treturn new ${presenterName}(${serviceName});
+}, 'scoped');
 `;
 
 	await writeIfNotExists(path.join(presentationPath, `${presenterName}.ts`), presenterContent);
-	await fs.writeFile(path.join(presentationPath, 'index.ts'), `export * from './${presenterName}';\n`, 'utf-8');
+	await updateIndexTs(presentationPath);
 
 	console.log(`✅ Presenter generated: ${path.join(presentationPath, `${presenterName}.ts`)}`);
 }

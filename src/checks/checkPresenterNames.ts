@@ -9,7 +9,7 @@ type PresenterOccurrence = {
 };
 
 const TARGET_EXTENSIONS = new Set(['.ts', '.js', '.svelte']);
-const IGNORED_DIRS = new Set(['node_modules', 'dist', '.svelte-kit', '.git']);
+const IGNORED_DIRS = new Set(['.backup', 'node_modules', 'dist', '.svelte-kit', '.git']);
 
 const CREATE_FACTORY_PATTERN = '(?:export\\s+)?(?:const|let|var)\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*=\\s*createPresenterFactory\\s*\\(';
 const IMPORT_FROM_PRESENTER_PATTERN = 'import\\s*\\{([^}]+)\\}\\s*from\\s*[\'"]([^\'"]+)[\'"]';

@@ -2,26 +2,44 @@ import fs from 'fs/promises';
 import path from 'path';
 
 export async function writeIfNotExists(filepath: string, content: string): Promise<boolean> {
+	await fs.mkdir(path.dirname(filepath), { recursive: true });
 	try {
-		await fs.access(filepath);
-		console.log(`⚠️  Skip existing: ${filepath}`);
+		await fs.writeFile(filepath, content, { encoding: 'utf8', flag: 'wx' });
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+		console.log(`Skip existing: ${filepath}`);
 		return false;
-	} catch {
-		await fs.mkdir(path.dirname(filepath), { recursive: true });
-		await fs.writeFile(filepath, content, 'utf-8');
-		console.log(`✅ Created: ${filepath}`);
-		return true;
 	}
+	console.log(`Created: ${filepath}`);
+	return true;
+}
+
+export async function appendBarrelExports(filepath: string, sources: string[]): Promise<void> {
+	let content = '';
+	try {
+		content = await fs.readFile(filepath, 'utf8');
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+	}
+	const additions = sources
+		.filter((source) => !content.includes("from '" + source + "'") && !content.includes('from "' + source + '"'))
+		.map((source) => 'export * from ' + JSON.stringify(source) + ';');
+	if (!additions.length && content.trim()) return;
+	await fs.mkdir(path.dirname(filepath), { recursive: true });
+	await fs.writeFile(
+		filepath,
+		content + (content && !content.endsWith('\n') ? '\n' : '') + (additions.length ? additions.join('\n') : 'export {};') + '\n'
+	);
 }
 
 export async function updateIndexTs(dir: string, filePattern = '.ts', ignore: string[] = ['index.ts']): Promise<void> {
-	try {
-		const files = (await fs.readdir(dir)).filter((f) => f.endsWith(filePattern) && !ignore.includes(f));
-		const content = files.map((f) => `export * from './${f.replace('.ts', '')}';`).join('\n') + '\n';
-		await fs.writeFile(path.join(dir, 'index.ts'), content, 'utf-8');
-	} catch {
-		// Directory doesn't exist yet
-	}
+	const files = (await fs.readdir(dir))
+		.filter((file) => file.endsWith(filePattern) && !file.endsWith('.d.ts') && !ignore.includes(file))
+		.sort();
+	await appendBarrelExports(
+		path.join(dir, 'index.ts'),
+		files.map((file) => './' + file.slice(0, -filePattern.length))
+	);
 }
 
 export async function ensureIndexExports(layerPath: string): Promise<void> {

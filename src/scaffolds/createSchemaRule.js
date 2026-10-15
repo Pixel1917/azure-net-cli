@@ -13,23 +13,23 @@ export const ${ruleName} = <T = unknown, D = unknown>(): ValidationRuleResult<T,
 };
 `;
 export default async function createSchemaRule() {
-	const { ruleNameRaw } = await prompts({
-		type: 'text',
-		name: 'ruleNameRaw',
-		message: 'Schema rule name:',
-		initial: 'File'
-	});
-	const pascalName = toPascalCase(String(ruleNameRaw ?? 'File')) || 'File';
-	const camelName = toCamelCase(pascalName) || 'file';
-	const { sharedContext } = await getSharedState();
-	const rulesPath = path.join(getFoundationConstructPath(sharedContext.name, 'schema'), 'custom-rules');
-	const filePath = path.join(rulesPath, `${pascalName}.ts`);
-	await fs.mkdir(rulesPath, { recursive: true });
-	const created = await writeIfNotExists(filePath, createSchemaRuleTemplate(camelName));
-	await updateIndexTs(rulesPath);
-	if (!created) {
-		console.log(`⚠️ Schema rule "${pascalName}" already exists. File was not overwritten.`);
-		return;
-	}
-	console.log(`✅ Schema rule created: ${filePath}`);
+    const { ruleNameRaw } = await prompts({
+        type: 'text',
+        name: 'ruleNameRaw',
+        message: 'Schema rule name:',
+        initial: 'File'
+    });
+    const pascalName = toPascalCase(String(ruleNameRaw ?? 'File')) || 'File';
+    const camelName = toCamelCase(pascalName) || 'file';
+    const { sharedContext } = await getSharedState();
+    const rulesPath = path.join(getFoundationConstructPath(sharedContext.name, 'schema'), 'CustomRules');
+    const filePath = path.join(rulesPath, `${pascalName}.ts`);
+    await fs.mkdir(rulesPath, { recursive: true });
+    const created = await writeIfNotExists(filePath, createSchemaRuleTemplate(camelName));
+    await updateIndexTs(rulesPath);
+    if (!created) {
+        console.log(`⚠️ Schema rule "${pascalName}" already exists. File was not overwritten.`);
+        return;
+    }
+    console.log(`✅ Schema rule created: ${filePath}`);
 }

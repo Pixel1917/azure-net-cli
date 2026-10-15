@@ -13,7 +13,6 @@ import {
 	resolveRepositoriesPath,
 	selectContext,
 	selectDatasource,
-	selectDomain,
 	writeRepositoryInterface
 } from './repositoryModuleShared.js';
 import { updateIndexTs, writeIfNotExists } from '../../utils/fileUtils.js';
@@ -30,6 +29,7 @@ type GenerateRepositoryResult = {
 	repositoryName: string;
 	useCasesName: string;
 	useCasesCreated: boolean;
+	datasourceName: string;
 };
 
 export default async function generateRepository(options: GenerateRepositoryOptions = {}): Promise<GenerateRepositoryResult | null> {
@@ -42,14 +42,7 @@ export default async function generateRepository(options: GenerateRepositoryOpti
 		return null;
 	}
 
-	let domainName: string | null = options.domainName ? String(options.domainName) : null;
-	if (!domainName) {
-		domainName = await selectDomain(contextName);
-	}
-	if (!domainName) {
-		process.exitCode = 1;
-		return null;
-	}
+	const domainName = contextName;
 
 	const { repositoryNameRaw } = await prompts({
 		type: 'text',
@@ -77,7 +70,7 @@ export default async function generateRepository(options: GenerateRepositoryOpti
 	});
 
 	const methodsCount = Number(methodsCountRaw ?? 0);
-	if (!Number.isFinite(methodsCount) || methodsCount < 0) {
+	if (!Number.isInteger(methodsCount) || methodsCount < 0) {
 		console.error('❌ Invalid methods count.');
 		process.exitCode = 1;
 		return null;
@@ -95,18 +88,20 @@ export default async function generateRepository(options: GenerateRepositoryOpti
 	await fs.mkdir(repositoriesPath, { recursive: true });
 	const repositoryPath = path.join(repositoriesPath, `${meta.className}.ts`);
 
-	await writeRepositoryInterface({
+	const interfaceCreated = await writeRepositoryInterface({
 		contextName,
 		domainName,
 		meta,
 		methods
 	});
 
+	if (!interfaceCreated) throw new Error('Repository interface already exists; no repository was generated.');
 	const repositoryContent = buildRepositoryContent({
 		meta,
 		contextAlias,
 		domainName,
 		datasource,
+		domainTypes,
 		methods
 	});
 
@@ -128,23 +123,21 @@ export default async function generateRepository(options: GenerateRepositoryOpti
 
 	let useCasesCreated = false;
 	if (shouldCreateUseCases) {
-		await createUseCasesForRepository({
+		useCasesCreated = await createUseCasesForRepository({
 			contextName,
 			contextAlias,
 			domainName,
 			repositoryName: meta.className
 		});
-		useCasesCreated = true;
 	}
 
 	if (!shouldCreateUseCases && options.forceCreateUseCases) {
-		await createUseCasesForRepository({
+		useCasesCreated = await createUseCasesForRepository({
 			contextName,
 			contextAlias,
 			domainName,
 			repositoryName: meta.className
 		});
-		useCasesCreated = true;
 	}
 
 	console.log(`✅ Repository generated: ${repositoryPath}`);
@@ -153,6 +146,7 @@ export default async function generateRepository(options: GenerateRepositoryOpti
 		domainName,
 		repositoryName: meta.className,
 		useCasesName: meta.useCasesClassName,
-		useCasesCreated
+		useCasesCreated,
+		datasourceName: datasource.name
 	};
 }

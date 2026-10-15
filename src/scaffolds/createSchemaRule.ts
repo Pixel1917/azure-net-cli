@@ -27,7 +27,7 @@ export default async function createSchemaRule(): Promise<void> {
 	const pascalName = toPascalCase(String(ruleNameRaw ?? 'File')) || 'File';
 	const camelName = toCamelCase(pascalName) || 'file';
 	const { sharedContext } = await getSharedState();
-	const rulesPath = path.join(getFoundationConstructPath(sharedContext.name, 'schema'), 'custom-rules');
+	const rulesPath = path.join(getFoundationConstructPath(sharedContext.name, 'schema'), 'CustomRules');
 	const filePath = path.join(rulesPath, `${pascalName}.ts`);
 
 	await fs.mkdir(rulesPath, { recursive: true });

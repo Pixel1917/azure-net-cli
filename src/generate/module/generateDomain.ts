@@ -1,10 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import prompts from 'prompts';
-import { normalizeContexts } from '../../init/initAliases.js';
-import { loadUserConfig } from '../../utils/loadConfig.js';
-import { toKebabCase, toPascalCase } from '../../utils/contextUtils.js';
-import { updateIndexTs, writeIfNotExists } from '../../utils/fileUtils.js';
+import { selectContext, toPascalCase } from '../../utils/contextUtils.js';
+import { appendBarrelExports, updateIndexTs, writeIfNotExists } from '../../utils/fileUtils.js';
 
 const parseInterfaceNames = (rawValue: unknown): string[] =>
 	String(rawValue ?? '')
@@ -21,7 +19,7 @@ const validateInterfaceNames = (rawValue: unknown): true | string => {
 	if (!names.length) return 'Provide at least one interface name';
 
 	for (const name of names) {
-		if (!name.startsWith('I')) {
+		if (!/^I[A-Z][A-Za-z0-9]*$/.test(name)) {
 			return `Interface "${name}" must start with "I"`;
 		}
 	}
@@ -35,30 +33,7 @@ const createInterfaceContent = (name: string): string => `export interface ${nam
 `;
 
 const writeRootIndex = async (domainPath: string): Promise<void> => {
-	const content = `export * from './model';
-export * from './ports';
-`;
-
-	await fs.writeFile(path.join(domainPath, 'index.ts'), content, 'utf-8');
-};
-
-const selectContext = async (): Promise<string | null> => {
-	const config = await loadUserConfig();
-	const contexts = normalizeContexts(config.contexts);
-	if (!contexts.length) {
-		console.error('❌ Cannot generate domain: `contexts` is missing or empty in azure-net.config.ts/js');
-		return null;
-	}
-
-	const { context } = await prompts({
-		type: 'select',
-		name: 'context',
-		message: 'Select context:',
-		choices: contexts.map((item) => ({ title: item.name, value: item.name })),
-		initial: 0
-	});
-
-	return context ? String(context) : null;
+	await appendBarrelExports(path.join(domainPath, 'index.ts'), ['./Entities', './Ports', './Enums']);
 };
 
 const createInterfacesInLayer = async (layerPath: string, names: string[]): Promise<void> => {
@@ -74,14 +49,6 @@ const createInterfacesInLayer = async (layerPath: string, names: string[]): Prom
 export default async function generateDomain(
 	options: { contextName?: string; entityName?: string } = {}
 ): Promise<{ contextName: string; domainName: string; domainPath: string } | null> {
-	const { entityRaw } = await prompts({
-		type: 'text',
-		name: 'entityRaw',
-		message: 'Entity name:',
-		initial: options.entityName ?? '',
-		validate: (value: string) => (String(value ?? '').trim().length > 0 ? true : 'Entity name is required')
-	});
-
 	let context: string | null = options.contextName ? String(options.contextName) : null;
 	if (!context) {
 		context = await selectContext();
@@ -91,10 +58,10 @@ export default async function generateDomain(
 		return null;
 	}
 
-	const entityName = toKebabCase(String(entityRaw ?? '').trim()) || 'entity';
-	const domainPath = path.join(process.cwd(), 'src', 'app', context, 'layers', 'domain', entityName);
-	const modelPath = path.join(domainPath, 'model');
-	const portsPath = path.join(domainPath, 'ports');
+	context = toPascalCase(context);
+	const domainPath = path.join(process.cwd(), 'src/app/Contexts', context, 'Domain');
+	const modelPath = path.join(domainPath, 'Entities');
+	const portsPath = path.join(domainPath, 'Ports');
 
 	await fs.mkdir(modelPath, { recursive: true });
 	await fs.mkdir(portsPath, { recursive: true });
@@ -102,7 +69,7 @@ export default async function generateDomain(
 	const { shouldCreateModels } = await prompts({
 		type: 'confirm',
 		name: 'shouldCreateModels',
-		message: 'Create model interfaces?',
+		message: 'Create entity interfaces?',
 		initial: true
 	});
 
@@ -110,7 +77,7 @@ export default async function generateDomain(
 		const { modelNamesRaw } = await prompts({
 			type: 'text',
 			name: 'modelNamesRaw',
-			message: 'Model interface names (comma separated, start with I):',
+			message: 'Entity interface names (comma separated, start with I):',
 			validate: validateInterfaceNames
 		});
 
@@ -141,7 +108,9 @@ export default async function generateDomain(
 		await updateIndexTs(portsPath);
 	}
 
+	await fs.mkdir(path.join(domainPath, 'Enums'), { recursive: true });
+	await updateIndexTs(path.join(domainPath, 'Enums'));
 	await writeRootIndex(domainPath);
 	console.log(`✅ Domain generated: ${domainPath}`);
-	return { contextName: context, domainName: entityName, domainPath };
+	return { contextName: context, domainName: context, domainPath };
 }

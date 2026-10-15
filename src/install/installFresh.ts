@@ -1,28 +1,8 @@
 import prompts from 'prompts';
-import { addLint } from '../plugins/index.js';
+import configureCommitTools from './configureCommitTools.js';
 import initEdges from '../init/initEdges.js';
 import initStructure from '../init/initStructure.js';
-import { normalizeContexts } from '../init/initAliases.js';
-import { loadUserConfig } from '../utils/loadConfig.js';
-import {
-	createCoreSchema,
-	createDatasource,
-	createDatasourceProvider,
-	createPresenterFactory,
-	createProgram,
-	createResponse,
-	createTranslationManager
-} from '../scaffolds/index.js';
-
-const printContextsError = (): void => {
-	console.error('❌ Cannot run "install fresh": `contexts` is missing or empty in azure-net.config.ts/js');
-	console.error('Add contexts first, for example:');
-	console.error('export default {');
-	console.error("\tcontexts: ['web', 'admin']");
-	console.error('\t// or');
-	console.error("\t// contexts: [{ name: 'web', alias: '$web' }, { name: 'admin', alias: '$admin' }]");
-	console.error('};');
-};
+import { createCoreSchema, createDatasource, createProgram, createResponse, createTranslationManager } from '../scaffolds/index.js';
 
 const askConfirm = async (message: string): Promise<boolean> => {
 	const result = await prompts({
@@ -42,35 +22,22 @@ const runOptionalStep = async (question: string, action: () => Promise<void>): P
 	try {
 		await action();
 	} catch (error) {
-		console.warn(`⚠️ Step failed: ${question}`);
-		console.warn(error);
+		throw new Error(`Step failed: ${question}`, { cause: error });
 	}
+	if (process.exitCode) throw new Error(`Step failed: ${question}`);
 };
 
 export default async function installFresh(): Promise<void> {
-	const config = await loadUserConfig();
-	const contexts = normalizeContexts(config.contexts);
-
-	if (!contexts.length) {
-		printContextsError();
-		process.exitCode = 1;
-		return;
-	}
-
 	await initStructure();
 	await initEdges();
 	await createProgram();
 
 	await runOptionalStep('Add commit tools (lint/commit conventions)?', async () => {
-		await addLint();
+		await configureCommitTools();
 	});
 
 	await runOptionalStep('Create schema factory?', async () => {
 		await createCoreSchema();
-	});
-
-	await runOptionalStep('Create presenter factory?', async () => {
-		await createPresenterFactory();
 	});
 
 	await runOptionalStep('Create API response?', async () => {
@@ -79,10 +46,6 @@ export default async function installFresh(): Promise<void> {
 
 	await runOptionalStep('Create datasource?', async () => {
 		await createDatasource();
-	});
-
-	await runOptionalStep('Create datasource provider?', async () => {
-		await createDatasourceProvider();
 	});
 
 	await runOptionalStep('Create translation manager (i18n)?', async () => {

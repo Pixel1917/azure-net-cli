@@ -3,7 +3,7 @@ import { writeIfNotExists } from '../utils/fileUtils.js';
 
 const createProgramTemplate = (): string => `import { createApp } from '@azure-net/kit';
 
-export const { register, Container } = createApp((app) => app);
+export const { register } = createApp((app) => app);
 `;
 
 export default async function createProgram(): Promise<void> {

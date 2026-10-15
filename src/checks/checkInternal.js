@@ -8,32 +8,35 @@ import checkImports from './checkImports.js';
 import checkHooks from './checkHooks.js';
 import checkLayerImports from './checkLayerImports.js';
 const tasks = [
-	{ name: 'presenter-names', run: checkPresenterNames },
-	{ name: 'provider-names', run: checkProviderNames },
-	{ name: 'provider-graph', run: checkProviderGraph },
-	{ name: 'domain', run: checkDomain },
-	{ name: 'imports', run: checkImports },
-	{ name: 'hooks', run: checkHooks },
-	{ name: 'layer-imports', run: checkLayerImports },
-	{ name: 'layer-boundaries', run: checkLayerBoundaries },
-	{ name: 'folders-structure', run: checkFoldersStructure }
+    { name: 'presenter-names', run: checkPresenterNames },
+    { name: 'provider-names', run: checkProviderNames },
+    { name: 'provider-graph', run: checkProviderGraph },
+    { name: 'domain', run: checkDomain },
+    { name: 'imports', run: checkImports },
+    { name: 'hooks', run: checkHooks },
+    { name: 'layer-imports', run: checkLayerImports },
+    { name: 'layer-boundaries', run: checkLayerBoundaries },
+    { name: 'folders-structure', run: checkFoldersStructure }
 ];
 const runTask = async (task) => {
-	console.log(`\n▶ Running check ${task.name}...`);
-	process.exitCode = 0;
-	await task.run();
-	if ((process.exitCode ?? 0) !== 0) {
-		throw new Error(`Check "${task.name}" failed`);
-	}
+    console.log(`\n▶ Running check ${task.name}...`);
+    process.exitCode = 0;
+    await task.run();
+    if ((process.exitCode ?? 0) !== 0) {
+        throw new Error(`Check "${task.name}" failed`);
+    }
 };
 export default async function checkInternal() {
-	try {
-		for (const task of tasks) {
-			await runTask(task);
-		}
-		console.log('\n✅ Internal checks passed.');
-	} catch (error) {
-		console.error(`\n❌ Internal checks failed: ${error instanceof Error ? error.message : String(error)}`);
-		process.exitCode = 1;
-	}
+    let failed = false;
+    for (const task of tasks) {
+        try {
+            await runTask(task);
+        }
+        catch (error) {
+            failed = true;
+            console.error(error instanceof Error ? error.message : String(error));
+        }
+    }
+    process.exitCode = failed ? 1 : 0;
+    console[failed ? 'error' : 'log'](failed ? 'Internal checks failed.' : 'Internal checks passed.');
 }

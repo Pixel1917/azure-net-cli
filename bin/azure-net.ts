@@ -1,11 +1,36 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
+import { readFileSync } from 'node:fs';
+import commit from '../src/git/commit.js';
+import push from '../src/git/push.js';
 import { addLint } from '../src/plugins/index.js';
 
 const program = new Command();
 
-program.name('azure-net').description('Azure-Net CLI generator').version('4.1.0');
+program
+	.name('azure-net')
+	.description('Azure-Net CLI generator')
+	.version(JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version);
+
+program
+	.command('commit')
+	.description('Interactively commit staged changes')
+	.action(() => commit());
+program
+	.command('push')
+	.description('Check, stage, commit and push')
+	.option('--no-check', 'Skip all project checks')
+	.action((options) => push(options));
+
+program
+	.command('migrate')
+	.description('Migrate the legacy application tree with backups and a report')
+	.option('--dry-run', 'Show the plan without writing files')
+	.option('-y, --yes', 'Apply the migration without confirmation')
+	.action(async (options) => {
+		await (await import('../src/migrate/migrate.js')).default(options);
+	});
 
 const addCommand = program.command('add').description('Add project integrations and plugins');
 const createCommand = program.command('create').description('Create project boilerplate artifacts');
@@ -14,15 +39,11 @@ const installCommand = program.command('install').description('Install project p
 const generateCommand = program.command('generate').description('Generate UI artifacts');
 const checkCommand = program.command('check').description('Run project checks');
 
-addCommand
-	.command('commit-tools')
-	.description('Setup linting and commit tools')
-	.option('-m, --manager <manager>', 'Package manager: bun | pnpm | npm | yarn')
-	.action(addLint);
+addCommand.command('commit-tools').description('Replace Prettier configuration without installing packages').action(addLint);
 
 createCommand
 	.command('schema-factory')
-	.description('Create base schema in shared essentials foundation constructs')
+	.description('Create base schema in Platform/Foundation')
 	.action(async () => {
 		const handler = (await import('../src/scaffolds/createCoreSchema.js')).default;
 		await handler();
@@ -30,23 +51,15 @@ createCommand
 
 createCommand
 	.command('translation-manager')
-	.description('Create translation manager in shared essentials localization')
+	.description('Create translation manager in Platform/Bootstrap/Localization')
 	.action(async () => {
 		const handler = (await import('../src/scaffolds/createTranslationManager.js')).default;
 		await handler();
 	});
 
 createCommand
-	.command('presenter-factory')
-	.description('Create presenter factory in shared essentials foundation constructs')
-	.action(async () => {
-		const handler = (await import('../src/scaffolds/createPresenterFactory.js')).default;
-		await handler();
-	});
-
-createCommand
 	.command('schema-rule')
-	.description('Create schema rule in shared essentials foundation constructs')
+	.description('Create schema rule in Platform/Foundation')
 	.action(async () => {
 		const handler = (await import('../src/scaffolds/createSchemaRule.js')).default;
 		await handler();
@@ -54,7 +67,7 @@ createCommand
 
 createCommand
 	.command('response')
-	.description('Create response in shared essentials foundation constructs')
+	.description('Create response in Platform/Foundation')
 	.action(async () => {
 		const handler = (await import('../src/scaffolds/createResponse.js')).default;
 		await handler();
@@ -62,23 +75,15 @@ createCommand
 
 createCommand
 	.command('datasource')
-	.description('Create datasource in core or context infrastructure')
+	.description('Create datasource in Platform/Foundation')
 	.action(async () => {
 		const handler = (await import('../src/scaffolds/createDatasource.js')).default;
 		await handler();
 	});
 
-createCommand
-	.command('datasource-provider')
-	.description('Create datasource provider in core or context infrastructure')
-	.action(async () => {
-		const handler = (await import('../src/scaffolds/createDatasourceProvider.js')).default;
-		await handler();
-	});
-
 initCommand
 	.command('edges')
-	.description('Initialize edges plugin in vite config')
+	.description('Configure AzureNetPlugin in Vite (legacy command name)')
 	.action(async () => {
 		const handler = (await import('../src/init/initEdges.js')).default;
 		await handler();
@@ -163,9 +168,17 @@ generateCommand
 
 generateCommand
 	.command('domain')
-	.description('Generate domain module (model/ports)')
+	.description('Generate domain types (Entities/Ports)')
 	.action(async () => {
 		const handler = (await import('../src/generate/module/generateDomain.js')).default;
+		await handler();
+	});
+
+generateCommand
+	.command('store')
+	.description('Generate a request-isolated reactive class with a browser singleton')
+	.action(async () => {
+		const handler = (await import('../src/generate/module/generateStore.js')).default;
 		await handler();
 	});
 
@@ -305,4 +318,7 @@ checkCommand
 		await handler();
 	});
 
-program.parse();
+program.parseAsync().catch((error: unknown) => {
+	console.error(error instanceof Error ? error.message : String(error));
+	process.exitCode = 1;
+});

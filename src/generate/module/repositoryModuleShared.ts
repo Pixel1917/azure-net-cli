@@ -1,14 +1,11 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import prompts from 'prompts';
-import { loadUserConfig } from '../../utils/loadConfig.js';
-import { normalizeContexts } from '../../init/initAliases.js';
-import { toCamelCase, toPascalCase } from '../../utils/contextUtils.js';
-import { updateIndexTs } from '../../utils/fileUtils.js';
-import { getFoundationConstructImportPath, getFoundationConstructPath, getSharedState } from '../../utils/sharedFoundation.js';
+import { selectContext as selectDiskContext, toCamelCase, toPascalCase } from '../../utils/contextUtils.js';
+import { updateIndexTs, writeIfNotExists } from '../../utils/fileUtils.js';
 
 type ContextConfig = { name: string; alias: string };
-type TypeLayer = 'ports' | 'model';
+type TypeLayer = 'Ports' | 'Entities' | 'Enums';
 type ResponseKind = 'domain' | 'primitive';
 type RepositoryMeta = {
 	className: string;
@@ -17,7 +14,7 @@ type RepositoryMeta = {
 	useCasesClassName: string;
 	repositoryDependencyName: string;
 };
-type DomainType = { name: string; layer: TypeLayer };
+type DomainType = { name: string; layer: TypeLayer; fileName?: string };
 type MethodTypeRef = { name: string; layer: TypeLayer };
 type MethodResponseRef = { kind: ResponseKind; type: string; layer: TypeLayer | null };
 type RepositoryMethod = {
@@ -82,13 +79,7 @@ const RESERVED_IDENTIFIERS = new Set([
 	'yield'
 ]);
 
-const normalizeAlias = (value: unknown, fallback: string): string => {
-	const raw = String(value ?? '').trim();
-	if (!raw.length) return fallback;
-	return raw.startsWith('$') ? raw : `$${raw}`;
-};
-
-const toTypeFileName = (typeName: string): string => String(typeName ?? '').replace(/^I/, '') || 'Type';
+const toTypeFileName = (typeName: string): string => String(typeName ?? '').replace(/^I(?=[A-Z])/, '') || 'Type';
 
 export const ensureRepositoryName = (rawName: unknown): string => {
 	const normalized = toPascalCase(String(rawName ?? '').trim() || 'Repository');
@@ -114,153 +105,99 @@ export const getRepositoryMeta = (repositoryName: unknown): RepositoryMeta => {
 	};
 };
 
+// Compatibility shape for presenter/schema consumers; contexts are discovered on disk.
 export const getConfigState = async (): Promise<{ contexts: ContextConfig[]; sharedAlias: string; sharedContextName: string }> => {
-	const config = await loadUserConfig();
-	const contexts = normalizeContexts(config.contexts);
-	const { sharedAlias, sharedContext } = await getSharedState();
-	return { contexts, sharedAlias, sharedContextName: sharedContext.name };
-};
-
-export const selectContext = async (message = 'Select context:'): Promise<string | null> => {
-	const { contexts } = await getConfigState();
-	if (!contexts.length) {
-		console.error('❌ Cannot continue: `contexts` is missing or empty in azure-net.config.ts/js');
-		return null;
+	let contexts: ContextConfig[] = [];
+	try {
+		const entries = await fs.readdir(path.join(process.cwd(), 'src/app/Contexts'), { withFileTypes: true });
+		contexts = entries
+			.filter((entry) => entry.isDirectory() && /^[A-Z][A-Za-z0-9]*$/.test(entry.name))
+			.map((entry) => ({ name: entry.name, alias: '#contexts/' + entry.name }));
+	} catch {
+		/* A new project may not contain any contexts yet. */
 	}
-
-	const { context } = await prompts({
-		type: 'select',
-		name: 'context',
-		message,
-		choices: contexts.map((item) => ({ title: item.name, value: item.name })),
-		initial: 0
-	});
-
-	return context ? String(context) : null;
+	return { contexts, sharedAlias: '#platform', sharedContextName: 'Platform' };
 };
 
-export const resolveContextAlias = (contexts: ContextConfig[], contextName: string): string => {
-	const found = contexts.find((item) => item.name === contextName);
-	if (!found) return `$${contextName}`;
-	return normalizeAlias(found.alias, `$${contextName}`);
-};
-
+export const selectContext = (message = 'Select context:'): Promise<string | null> => selectDiskContext(message);
+export const resolveContextAlias = (_contexts: ContextConfig[], contextName: string): string => '#contexts/' + toPascalCase(contextName);
 export const resolveRepositoriesPath = (contextName: string): string =>
-	path.join(process.cwd(), 'src', 'app', contextName, 'layers', 'infrastructure', 'http', 'repositories');
-
-export const resolveDatasourcesPath = (contextName: string): string =>
-	path.join(process.cwd(), 'src', 'app', contextName, 'layers', 'infrastructure', 'http', 'datasources');
-
-export const resolveSharedDatasourcesPath = async (): Promise<string> => {
-	const { sharedContext } = await getSharedState();
-	return getFoundationConstructPath(sharedContext.name, 'datasource');
+	path.join(process.cwd(), 'src/app/Contexts', toPascalCase(contextName), 'Infrastructure/Repositories');
+export const resolveDatasourcesPath = (...compatibility: [contextName?: string]): string => {
+	void compatibility;
+	return path.join(process.cwd(), 'src/app/Platform/Foundation/Datasource');
 };
-
-export const resolveDomainRootPath = (contextName: string, domainName: string): string =>
-	path.join(process.cwd(), 'src', 'app', contextName, 'layers', 'domain', domainName);
-
+export const resolveSharedDatasourcesPath = async (): Promise<string> => resolveDatasourcesPath();
+export const resolveDomainRootPath = (contextName: string, ...compatibility: [domainName?: string]): string => {
+	void compatibility;
+	return path.join(process.cwd(), 'src/app/Contexts', toPascalCase(contextName), 'Domain');
+};
 export const resolveUseCasesPath = (contextName: string): string =>
-	path.join(process.cwd(), 'src', 'app', contextName, 'layers', 'application', 'use-cases');
+	path.join(process.cwd(), 'src/app/Contexts', toPascalCase(contextName), 'Application/UseCases');
 
 export const getAvailableTsNames = async (targetPath: string): Promise<string[]> => {
 	try {
 		const files = await fs.readdir(targetPath);
-		return files.filter((item) => item.endsWith('.ts') && item !== 'index.ts').map((item) => item.replace(/\.ts$/, ''));
+		return files
+			.filter((item) => item.endsWith('.ts') && !item.endsWith('.d.ts') && item !== 'index.ts')
+			.map((item) => item.replace(/\.ts$/, ''));
 	} catch {
 		return [];
 	}
 };
 
-export const selectDatasource = async (contextName: string): Promise<DatasourceInfo | null> => {
-	const { contexts, sharedAlias } = await getConfigState();
-	const contextAlias = resolveContextAlias(contexts, contextName);
-	const sharedDatasources = await getAvailableTsNames(await resolveSharedDatasourcesPath());
-	const contextDatasources = await getAvailableTsNames(resolveDatasourcesPath(contextName));
-
-	const choices: Array<{ title: string; value: DatasourceInfo }> = [];
-	for (const datasource of sharedDatasources) {
-		choices.push({
-			title: `${datasource} (shared foundation)`,
-			value: { name: datasource, importPath: getFoundationConstructImportPath(sharedAlias, 'datasource') }
-		});
-	}
-
-	for (const datasource of contextDatasources) {
-		choices.push({
-			title: `${datasource} (${contextName})`,
-			value: { name: datasource, importPath: `${contextAlias}/layers/infrastructure/http/datasources` }
-		});
-	}
-
-	if (!choices.length) {
-		console.error(`❌ No datasources found in shared foundation or context "${contextName}".`);
+export const selectDatasource = async (...compatibility: [contextName?: string]): Promise<DatasourceInfo | null> => {
+	void compatibility;
+	const names = await getAvailableTsNames(await resolveSharedDatasourcesPath());
+	if (!names.length) {
+		console.error('No datasources found in Platform/Foundation/Datasource. Create a Foundation datasource first.');
 		return null;
 	}
-
 	const { datasource } = await prompts({
 		type: 'select',
 		name: 'datasource',
-		message: 'Select datasource:',
-		choices,
+		message: 'Select Foundation datasource:',
+		choices: names.map((name) => ({ title: name, value: { name, importPath: '#platform/Foundation/Datasource' } })),
 		initial: 0
 	});
-
 	return datasource ?? null;
 };
 
-export const selectDomain = async (contextName: string): Promise<string | null> => {
-	const domainPath = path.join(process.cwd(), 'src', 'app', contextName, 'layers', 'domain');
-	try {
-		const items = await fs.readdir(domainPath, { withFileTypes: true });
-		const domains = items.filter((item) => item.isDirectory()).map((item) => item.name);
-		if (!domains.length) {
-			console.error(`❌ No domain folders found in ${domainPath}`);
-			return null;
-		}
+// Retained for callers using the old metadata shape; there is no domain-folder selector.
+export const selectDomain = async (contextName: string): Promise<string> => toPascalCase(contextName);
 
-		const { domain } = await prompts({
-			type: 'select',
-			name: 'domain',
-			message: 'Select domain:',
-			choices: domains.map((item) => ({ title: item, value: item })),
-			initial: 0
-		});
-
-		return domain ? String(domain) : null;
-	} catch {
-		console.error(`❌ Domain path not found: ${domainPath}`);
-		return null;
-	}
-};
-
-const extractInterfaceName = (content: string, fallback: string): string => {
-	const match = content.match(/export\s+interface\s+([A-Za-z0-9_]+)/);
-	return match?.[1] ?? fallback;
-};
-
-export const getDomainTypes = async (contextName: string, domainName: string): Promise<DomainType[]> => {
+export const getDomainTypes = async (contextName: string, domainName?: string): Promise<DomainType[]> => {
 	const root = resolveDomainRootPath(contextName, domainName);
 	const result: DomainType[] = [];
-	const readLayer = async (layer: TypeLayer): Promise<void> => {
-		const layerPath = path.join(root, layer);
+	const readLayer = async (layer: TypeLayer, relative = ''): Promise<void> => {
+		const directory = path.join(root, layer, relative);
+		let entries;
 		try {
-			const files = await fs.readdir(layerPath);
-			for (const fileName of files) {
-				if (!fileName.endsWith('.ts') || fileName === 'index.ts') continue;
-				const absolute = path.join(layerPath, fileName);
-				const content = await fs.readFile(absolute, 'utf-8');
-				const fallback = fileName.replace(/\.ts$/, '');
-				const interfaceName = extractInterfaceName(content, fallback);
-				result.push({ name: interfaceName, layer });
+			entries = await fs.readdir(directory, { withFileTypes: true });
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+			throw error;
+		}
+		for (const entry of entries) {
+			if (entry.isDirectory()) {
+				await readLayer(layer, path.join(relative, entry.name));
+				continue;
 			}
-		} catch {
-			// ignore
+			if (!entry.name.endsWith('.ts') || entry.name.endsWith('.d.ts') || entry.name === 'index.ts') continue;
+			const content = await fs.readFile(path.join(directory, entry.name), 'utf8');
+			for (const match of content.matchAll(/export\s+(?:declare\s+)?(?:interface|type|(?:const\s+)?enum|class)\s+([A-Za-z_$][\w$]*)/g)) {
+				result.push({ name: match[1]!, layer, fileName: path.join(relative, entry.name.slice(0, -3)).split(path.sep).join('/') });
+			}
 		}
 	};
-
-	await readLayer('ports');
-	await readLayer('model');
+	for (const layer of ['Ports', 'Entities', 'Enums'] as const) await readLayer(layer);
 	return result;
+};
+
+// Type expressions are not import specifiers: import their referenced domain symbols only.
+const referencedTypes = (expression: string, types: DomainType[]): DomainType[] => {
+	const identifiers = new Set(expression.replace(/(['"])(?:\\.|(?!\1).)*?\1/g, '').match(/[A-Za-z_$][\w$]*/g) ?? []);
+	return types.filter((type) => identifiers.has(type.name));
 };
 
 const isPrimitiveType = (value: unknown): boolean =>
@@ -279,14 +216,14 @@ const buildResponseSelection = async (domainTypes: DomainType[]): Promise<Method
 			type: 'text',
 			name: 'primitiveType',
 			message: 'Primitive response type:',
-			validate: (value) => (String(value ?? '').trim().length > 0 ? true : 'Type is required')
+			validate: (value) => (isPrimitiveType(value) ? true : 'Enter a primitive type such as string, unknown or never')
 		});
 
 		return { kind: 'primitive', type: String(primitiveType).trim(), layer: null };
 	}
 
 	if (!domainTypes.length) {
-		console.error('❌ Domain has no model/ports types to choose from.');
+		console.error('❌ Domain has no Entities/Ports/Enums types to choose from.');
 		return null;
 	}
 
@@ -425,7 +362,13 @@ const getMethodParams = (method: RepositoryMethod): string => {
 };
 
 const getRequestMapping = (method: RepositoryMethod): { callbackParams: string; call: string } => {
-	const routeWithPath = method.pathParamType ? `${method.route}/\${pathParam}` : method.route;
+	const escapedRoute = method.route
+		.replace(/\\/g, '\\\\')
+		.replace(/`/g, '\\`')
+		.replace(/\$\{/g, '\\${')
+		.replace(/\r/g, '\\r')
+		.replace(/\n/g, '\\n');
+	const routeWithPath = method.pathParamType ? `${escapedRoute}/\${pathParam}` : escapedRoute;
 
 	if (method.httpMethod === 'get') {
 		if (method.queryType) {
@@ -481,33 +424,51 @@ export const buildRepositoryMethodCode = (method: RepositoryMethod): string => {
 	const responseType = getResponseTypeName(method);
 	const mapping = getRequestMapping(method);
 
-	return `\tpublic async ${method.name}(${params}) {\n\t\treturn this.datasource\n\t\t\t.createRequest<${responseType}>((${mapping.callbackParams}) => ${mapping.call})\n\t\t\t.then((res) => res.getData());\n\t}`;
+	return `\tpublic async ${method.name}(${params}) {\n\t\treturn this.datasource\n\t\t\t.createRequest<${responseType}>((${mapping.callbackParams}) => ${mapping.call})\n\t\t\t.then((res: { getData(): ${responseType} } | { data: ${responseType} }) => 'getData' in res ? res.getData() : res.data);\n\t}`;
 };
 
 export const buildRepositoryContent = ({
 	meta,
 	contextAlias,
-	domainName,
 	datasource,
+	domainTypes = [],
 	methods
 }: {
 	meta: RepositoryMeta;
 	contextAlias: string;
 	domainName: string;
+	domainTypes?: DomainType[];
 	datasource: DatasourceInfo;
 	methods: RepositoryMethod[];
 }): string => {
-	const typeImports = new Set([meta.repositoryInterfaceName]);
+	const importLines = [
+		`import type { ${meta.repositoryInterfaceName} } from '${contextAlias}/Domain/Ports/${toTypeFileName(meta.repositoryInterfaceName)}';`
+	];
+	const imported = new Set<string>();
 	for (const method of methods) {
-		if (!isPrimitiveType(method.response.type)) typeImports.add(method.response.type);
-		if (method.queryType) typeImports.add(method.queryType.name);
-		if (method.bodyType) typeImports.add(method.bodyType.name);
+		for (const expression of [method.response.type, method.queryType?.name, method.bodyType?.name]) {
+			if (!expression) continue;
+			for (const type of referencedTypes(expression, domainTypes)) {
+				if (imported.has(type.name)) continue;
+				imported.add(type.name);
+				importLines.push(
+					`import type { ${type.name} } from '${contextAlias}/Domain/${type.layer}/${type.fileName ?? toTypeFileName(type.name)}';`
+				);
+			}
+		}
 	}
-
+	// Preserve the helper contract for callers that do not supply discovery metadata.
+	if (!domainTypes.length) {
+		const names = new Set<string>();
+		for (const method of methods) {
+			if (method.response.kind === 'domain') names.add(method.response.type);
+			if (method.queryType) names.add(method.queryType.name);
+			if (method.bodyType) names.add(method.bodyType.name);
+		}
+		if (names.size) importLines.push(`import type { ${[...names].join(', ')} } from '${contextAlias}/Domain';`);
+	}
 	const methodsCode = methods.map((method) => buildRepositoryMethodCode(method)).join('\n\n');
-	const typeImportLine = typeImports.size
-		? `import type { ${Array.from(typeImports).join(', ')} } from '${contextAlias}/layers/domain/${domainName}';\n`
-		: '';
+	const typeImportLine = importLines.join('\n') + '\n';
 
 	return `import { ${datasource.name} } from '${datasource.importPath}';
 ${typeImportLine}
@@ -529,34 +490,24 @@ export const writeRepositoryInterface = async ({
 	domainName: string;
 	meta: RepositoryMeta;
 	methods: RepositoryMethod[];
-}): Promise<void> => {
+}): Promise<boolean> => {
 	const domainPath = resolveDomainRootPath(contextName, domainName);
-	const portsPath = path.join(domainPath, 'ports');
+	const portsPath = path.join(domainPath, 'Ports');
 	await fs.mkdir(portsPath, { recursive: true });
 
-	const portsImports = new Set<string>();
-	const modelImports = new Set<string>();
-
-	for (const method of methods) {
-		const allTypes: MethodTypeRef[] = [];
-		if (!isPrimitiveType(method.response.type) && method.response.layer) {
-			allTypes.push({ name: method.response.type, layer: method.response.layer });
-		}
-		if (method.queryType) allTypes.push(method.queryType);
-		if (method.bodyType) allTypes.push(method.bodyType);
-
-		for (const typeEntry of allTypes) {
-			if (typeEntry.layer === 'ports') portsImports.add(typeEntry.name);
-			if (typeEntry.layer === 'model') modelImports.add(typeEntry.name);
-		}
-	}
-
+	const types = await getDomainTypes(contextName, domainName);
 	const imports: string[] = [];
-	for (const name of Array.from(portsImports)) {
-		imports.push(`import type { ${name} } from './${toTypeFileName(name)}';`);
-	}
-	for (const name of Array.from(modelImports)) {
-		imports.push(`import type { ${name} } from '../model/${toTypeFileName(name)}';`);
+	const imported = new Set<string>();
+	for (const method of methods) {
+		for (const expression of [method.response.type, method.queryType?.name, method.bodyType?.name]) {
+			if (!expression) continue;
+			for (const type of referencedTypes(expression, types)) {
+				if (imported.has(type.name) || type.name === meta.repositoryInterfaceName) continue;
+				imported.add(type.name);
+				const source = type.layer === 'Ports' ? './' : '../' + type.layer + '/';
+				imports.push(`import type { ${type.name} } from '${source}${type.fileName}';`);
+			}
+		}
 	}
 
 	const signatures = methods
@@ -568,20 +519,16 @@ export const writeRepositoryInterface = async ({
 		.join('\n');
 
 	const content = `${imports.join('\n')}${imports.length ? '\n\n' : ''}export interface ${meta.repositoryInterfaceName} {\n${signatures ? `${signatures}\n` : ''}}\n`;
-	await fs.writeFile(path.join(portsPath, `${toTypeFileName(meta.repositoryInterfaceName)}.ts`), content, 'utf-8');
+	const created = await writeIfNotExists(path.join(portsPath, `${toTypeFileName(meta.repositoryInterfaceName)}.ts`), content);
+	if (!created) return false;
 	await updateIndexTs(portsPath);
-};
-
-const parseRepositoryFileForDomain = (content: string, contextAlias: string): string | null => {
-	const escapedAlias = contextAlias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-	const regex = new RegExp(`from\\s+['"]${escapedAlias}/layers/domain/([^'"]+)['"]`);
-	const match = content.match(regex);
-	return match?.[1] ?? null;
+	await ensureDomainScaffold(contextName);
+	return true;
 };
 
 const parseRepositoryMethodsFromInterface = (content: string): string[] => {
 	const methods: string[] = [];
-	const regex = /(\w+)\(([^)]*)\)\s*:\s*Promise<([^>]+)>;/g;
+	const regex = /^\s*(\w+)\s*(?:<[^\n]+>)?\s*\(/gm;
 	let match;
 	while ((match = regex.exec(content)) !== null) {
 		const methodName = match[1];
@@ -602,11 +549,11 @@ export const createUseCasesForRepository = async ({
 	repositoryName: string;
 }): Promise<boolean> => {
 	const meta = getRepositoryMeta(repositoryName);
-	const interfacePath = path.join(
-		resolveDomainRootPath(contextName, domainName),
-		'ports',
-		`${toTypeFileName(meta.repositoryInterfaceName)}.ts`
+	const type = (await getDomainTypes(contextName, domainName)).find(
+		(type) => type.name === meta.repositoryInterfaceName && type.layer === 'Ports'
 	);
+	const interfaceFileName = type?.fileName ?? toTypeFileName(meta.repositoryInterfaceName);
+	const interfacePath = path.join(resolveDomainRootPath(contextName), 'Ports', interfaceFileName + '.ts');
 
 	let interfaceContent = '';
 	try {
@@ -623,7 +570,7 @@ export const createUseCasesForRepository = async ({
 	const declares = methods.map((methodName) => `\tdeclare ${methodName}: ${meta.repositoryInterfaceName}['${methodName}'];`).join('\n');
 
 	const content = `import { ClassMirror } from '@azure-net/kit';
-import type { ${meta.repositoryInterfaceName} } from '${contextAlias}/layers/domain/${domainName}';
+import type { ${meta.repositoryInterfaceName} } from '${contextAlias}/Domain/Ports/${interfaceFileName}';
 
 export class ${meta.useCasesClassName} extends ClassMirror {
 \tconstructor(private ${meta.repositoryDependencyName}: ${meta.repositoryInterfaceName}) {
@@ -634,7 +581,8 @@ ${declares ? `${declares}\n` : ''}
 }
 `;
 
-	await fs.writeFile(path.join(useCasesPath, `${meta.useCasesClassName}.ts`), content, 'utf-8');
+	const created = await writeIfNotExists(path.join(useCasesPath, `${meta.useCasesClassName}.ts`), content);
+	if (!created) return false;
 	await updateIndexTs(useCasesPath);
 	return true;
 };
@@ -651,7 +599,7 @@ export const resolveDomainForRepository = async ({
 	const repositoryPath = path.join(resolveRepositoriesPath(contextName), `${ensureRepositoryName(repositoryName)}.ts`);
 	try {
 		const content = await fs.readFile(repositoryPath, 'utf-8');
-		return parseRepositoryFileForDomain(content, contextAlias);
+		return content.includes(`${contextAlias}/Domain`) ? toPascalCase(contextName) : null;
 	} catch {
 		return null;
 	}
@@ -663,7 +611,38 @@ export const promptMethodsBatch = async (domainTypes: DomainType[], count: numbe
 		console.log(`\n🧩 Method ${index + 1} of ${count}`);
 		const method = await promptMethodDefinition(domainTypes);
 		if (!method) return null;
+		if (method.name === 'constructor' || methods.some((item) => item.name === method.name))
+			throw new Error('Duplicate or reserved method name: ' + method.name);
 		methods.push(method);
 	}
 	return methods;
+};
+
+export const ensureDomainScaffold = async (contextName: string): Promise<void> => {
+	const root = resolveDomainRootPath(contextName);
+	for (const layer of ['Entities', 'Ports', 'Enums']) {
+		const directory = path.join(root, layer);
+		await fs.mkdir(directory, { recursive: true });
+		await updateIndexTs(directory);
+	}
+	await writeIfNotExists(path.join(root, 'index.ts'), "export * from './Entities';\nexport * from './Ports';\nexport * from './Enums';\n");
+};
+
+export const printApplicationProviderWiring = (contextName: string, repositoryName: string, datasourceName: string): void => {
+	const meta = getRepositoryMeta(repositoryName);
+	const alias = resolveContextAlias([], contextName);
+	console.log('\nManually wire #platform/Foundation/DI/ApplicationProvider.ts before generating the presenter.');
+	console.log(`import { ${datasourceName} } from '#platform/Foundation/Datasource';
+import { ${meta.className} } from '${alias}/Infrastructure/Repositories';
+import { ${meta.useCasesClassName} } from '${alias}/Application/UseCases';
+
+// Merge into the existing ApplicationProvider configuration.
+register: () => {
+ const repository = () => new ${meta.className}(new ${datasourceName}({ /* http, query */ }));
+ return {
+  ${meta.useCasesClassName}: () => new ${meta.useCasesClassName}(repository()),
+  // Optional: expose the repository as a lazy factory too.
+  // ${meta.className}: repository,
+ };
+}`);
 };

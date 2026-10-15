@@ -1,85 +1,63 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { loadUserConfig } from '../utils/loadConfig.js';
-import { normalizeContexts } from '../init/initAliases.js';
-
-type StructureIssue = {
-	file: string;
-	message: string;
-};
-
-type ContextConfig = {
-	name: string;
-	alias: string;
-};
-
-const ALLOWED_LAYERS_FOLDERS = new Set(['domain', 'presentation', 'infrastructure', 'application']);
-const ALLOWED_UI_FOLDERS = new Set(['components', 'widgets', 'design', 'style']);
-const ALLOWED_COMPONENTS_FOLDERS = new Set(['page', 'layout', 'shared']);
-
-const toPosixPath = (value: string): string => value.split(path.sep).join('/');
-
-const getRelativePath = (filePath: string): string => toPosixPath(path.relative(process.cwd(), filePath));
-
-const getDirectories = async (dirPath: string): Promise<string[] | null> => {
-	try {
-		const entries = await fs.readdir(dirPath, { withFileTypes: true });
-		return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
-	} catch {
-		return null;
-	}
-};
-
-const checkOnlyAllowedFolders = async (
-	basePath: string,
-	allowed: Set<string>,
-	scopeLabel: string,
-	issues: StructureIssue[]
-): Promise<void> => {
-	const directories = await getDirectories(basePath);
-	if (!directories) return;
-
-	for (const dir of directories) {
-		if (allowed.has(dir)) continue;
-		issues.push({
-			file: basePath,
-			message: `${scopeLabel} can contain only: ${Array.from(allowed).join(', ')}. Found: ${dir}`
-		});
-	}
-};
+import { appRoot, directories, report, type Issue } from './architecture.js';
 
 export default async function checkFoldersStructure(): Promise<void> {
-	const config = await loadUserConfig();
-	const contexts = normalizeContexts(config.contexts) as ContextConfig[];
-
-	if (!contexts.length) {
-		console.error('❌ No contexts found in azure-net.config.ts/js. Fill `contexts` first.');
-		process.exitCode = 1;
-		return;
+	const issues: Issue[] = [];
+	const issue = (file: string, message: string): void => {
+		issues.push({ file, line: 1, message });
+	};
+	const allowed = async (root: string, names: string[]): Promise<void> => {
+		for (const name of await directories(root))
+			if (!names.includes(name)) issue(path.join(root, name), `Allowed folders: ${names.join(', ')}`);
+	};
+	const walk = async (root: string): Promise<void> => {
+		for (const entry of await fs.readdir(root, { withFileTypes: true })) {
+			if (entry.name === '.backup' && root === appRoot()) continue;
+			const file = path.join(root, entry.name);
+			const routes = file === path.join(appRoot(), 'Presentation', 'routes');
+			const name = entry.isDirectory() ? entry.name : entry.name.split('.')[0]!;
+			if (!routes && !(entry.isFile() && entry.name === 'index.ts') && !/^[A-Z][A-Za-z0-9]*$/.test(name))
+				issue(file, 'Folders and files under src/app must use PascalCase (except index.ts)');
+			if (entry.isDirectory()) await walk(file);
+		}
+	};
+	try {
+		await allowed(appRoot(), ['Contexts', 'Presentation', 'Platform']);
+		for (const root of ['Contexts', 'Presentation', 'Platform']) {
+			if (!(await fs.stat(path.join(appRoot(), root)).catch(() => null))?.isDirectory())
+				issue(path.join(appRoot(), root), 'Required application root is missing');
+		}
+		for (const context of await directories(path.join(appRoot(), 'Contexts'))) {
+			const root = path.join(appRoot(), 'Contexts', context);
+			await allowed(root, ['Domain', 'Application', 'Infrastructure']);
+			for (const [layer, children] of Object.entries({
+				Domain: ['Entities', 'Ports', 'Enums'],
+				Application: ['UseCases'],
+				Infrastructure: ['Repositories']
+			})) {
+				const layerRoot = path.join(root, layer);
+				if (!(await fs.stat(layerRoot).catch(() => null))?.isDirectory()) {
+					issue(layerRoot, 'Required context layer is missing');
+					continue;
+				}
+				await allowed(layerRoot, children);
+			}
+		}
+		const presentation = path.join(appRoot(), 'Presentation');
+		const folders = await directories(presentation);
+		const flat = ['Ui', 'Scopes', 'Shell'];
+		for (const folder of folders) {
+			const canonical = [...flat, 'Shared'].find((name) => name.toLowerCase() === folder.toLowerCase());
+			if (canonical && canonical !== folder) issue(path.join(presentation, folder), `Use the canonical folder name "${canonical}"`);
+		}
+		const workspaces = folders.filter((name) => ![...flat, 'routes', 'Routes'].includes(name));
+		if (folders.some((name) => flat.includes(name)) && workspaces.length)
+			issue(presentation, 'Presentation cannot mix flat Ui/Scopes/Shell folders with workspaces');
+		for (const workspace of workspaces) await allowed(path.join(presentation, workspace), flat);
+		await walk(appRoot());
+	} catch (error) {
+		issue(appRoot(), String(error));
 	}
-
-	const issues: StructureIssue[] = [];
-
-	for (const context of contexts) {
-		const contextRoot = path.join(process.cwd(), 'src', 'app', context.name);
-		const layersPath = path.join(contextRoot, 'layers');
-		const uiPath = path.join(contextRoot, 'ui');
-		const componentsPath = path.join(uiPath, 'components');
-
-		await checkOnlyAllowedFolders(layersPath, ALLOWED_LAYERS_FOLDERS, `layers (${context.name})`, issues);
-		await checkOnlyAllowedFolders(uiPath, ALLOWED_UI_FOLDERS, `ui (${context.name})`, issues);
-		await checkOnlyAllowedFolders(componentsPath, ALLOWED_COMPONENTS_FOLDERS, `ui/components (${context.name})`, issues);
-	}
-
-	if (!issues.length) {
-		console.log('✅ Folders structure check passed.');
-		return;
-	}
-
-	console.error('❌ Folders structure check failed:');
-	for (const issue of issues) {
-		console.error(`• ${getRelativePath(issue.file)} — ${issue.message}`);
-	}
-
-	process.exitCode = 1;
+	report('Folders structure', issues);
 }

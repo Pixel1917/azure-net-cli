@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { loadUserConfig } from '../utils/loadConfig.js';
-import { normalizeContexts } from '../init/initAliases.js';
+import ts from 'typescript';
+import { appRoot, directories, exportOnly, parseSource } from './architecture.js';
 
 type DomainIssue = {
 	file: string;
@@ -16,46 +16,17 @@ type Declaration = {
 };
 
 const DOMAIN_FILE_EXTENSIONS = new Set(['.ts']);
-const IGNORED_DIRS = new Set(['node_modules', 'dist', '.svelte-kit', '.git']);
-
-const INTERFACE_DECLARATION_PATTERN = /(?:^|\n)\s*(?:export\s+)?interface\s+([A-Za-z_$][A-Za-z0-9_$]*)\b/g;
-const TYPE_DECLARATION_PATTERN = /(?:^|\n)\s*(?:export\s+)?type\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=/g;
-
-const EXPORT_STAR_PATTERN = /export\s+\*\s+from\s*['"][^'"]+['"]\s*;?/g;
-const EXPORT_FROM_PATTERN = /export\s+(?:type\s+)?\{[\s\S]*?\}\s+from\s*['"][^'"]+['"]\s*;?/g;
-const EXPORT_LOCAL_PATTERN = /export\s+(?:type\s+)?\{[\s\S]*?\}\s*;?/g;
+const IGNORED_DIRS = new Set(['.backup', 'node_modules', 'dist', '.svelte-kit', '.git']);
 
 const toPosixPath = (value: string): string => value.split(path.sep).join('/');
 
-const stripComments = (content: string): string => content.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^\\])\/\/.*$/gm, '$1');
-
-const stripExportStatements = (content: string): string =>
-	content.replace(EXPORT_STAR_PATTERN, '').replace(EXPORT_FROM_PATTERN, '').replace(EXPORT_LOCAL_PATTERN, '');
-
-const findLineByIndex = (content: string, index: number): number => {
-	let line = 1;
-	for (let i = 0; i < index; i += 1) {
-		if (content[i] === '\n') line += 1;
-	}
-	return line;
-};
-
 const getRelativeFilePath = (filePath: string): string => toPosixPath(path.relative(process.cwd(), filePath));
-
-const isEnumsPath = (filePath: string): boolean => {
-	const normalized = toPosixPath(filePath);
-	return normalized.includes('/enums/');
-};
 
 const isIndexFile = (filePath: string): boolean => path.basename(filePath) === 'index.ts';
 
 const startsWithInterfacePrefix = (filePath: string): boolean => /^I[A-Z]/.test(path.basename(filePath, '.ts'));
 
-const isExportOnlyIndex = (content: string): boolean => {
-	const withoutComments = stripComments(content);
-	const withoutExports = stripExportStatements(withoutComments);
-	return withoutExports.trim().length === 0;
-};
+const isExportOnlyIndex = exportOnly;
 
 const validateName = (declaration: Declaration): string | null => {
 	if (declaration.kind === 'interface') {
@@ -68,34 +39,19 @@ const validateName = (declaration: Declaration): string | null => {
 };
 
 const extractDeclarations = (content: string): Declaration[] => {
-	const cleaned = stripComments(content);
+	const source = parseSource(content);
 	const declarations: Declaration[] = [];
-
-	const interfaceRegex = new RegExp(INTERFACE_DECLARATION_PATTERN.source, 'g');
-	let interfaceMatch: RegExpExecArray | null;
-	while ((interfaceMatch = interfaceRegex.exec(cleaned)) !== null) {
-		const name = interfaceMatch[1];
-		if (!name) continue;
-		declarations.push({
-			kind: 'interface',
-			name,
-			line: findLineByIndex(cleaned, interfaceMatch.index)
-		});
-	}
-
-	const typeRegex = new RegExp(TYPE_DECLARATION_PATTERN.source, 'g');
-	let typeMatch: RegExpExecArray | null;
-	while ((typeMatch = typeRegex.exec(cleaned)) !== null) {
-		const name = typeMatch[1];
-		if (!name) continue;
-		declarations.push({
-			kind: 'type',
-			name,
-			line: findLineByIndex(cleaned, typeMatch.index)
-		});
-	}
-
-	return declarations.sort((a, b) => a.line - b.line);
+	const visit = (node: ts.Node): void => {
+		if (ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node))
+			declarations.push({
+				kind: ts.isInterfaceDeclaration(node) ? 'interface' : 'type',
+				name: node.name.text,
+				line: source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1
+			});
+		ts.forEachChild(node, visit);
+	};
+	visit(source);
+	return declarations;
 };
 
 const listDomainFiles = async (domainRoot: string): Promise<string[]> => {
@@ -142,10 +98,6 @@ const collectIssuesForFile = (filePath: string, content: string): DomainIssue[] 
 		});
 	}
 
-	if (isEnumsPath(filePath)) {
-		return issues;
-	}
-
 	if (!isIndexFile(filePath) && startsWithInterfacePrefix(filePath)) {
 		issues.push({
 			file: filePath,
@@ -177,19 +129,18 @@ const collectIssuesForFile = (filePath: string, content: string): DomainIssue[] 
 };
 
 export default async function checkDomain(): Promise<void> {
-	const config = await loadUserConfig();
-	const contexts = normalizeContexts(config.contexts);
-
-	if (!contexts.length) {
-		console.error('❌ No contexts found in azure-net.config.ts/js. Fill `contexts` first.');
+	const issues: DomainIssue[] = [];
+	let contexts: string[];
+	try {
+		contexts = await directories(path.join(appRoot(), 'Contexts'));
+	} catch {
+		console.error('Contexts folder not found in src/app.');
 		process.exitCode = 1;
 		return;
 	}
 
-	const issues: DomainIssue[] = [];
-
 	for (const context of contexts) {
-		const domainRoot = path.join(process.cwd(), 'src', 'app', context.name, 'layers', 'domain');
+		const domainRoot = path.join(appRoot(), 'Contexts', context, 'Domain');
 
 		try {
 			await fs.access(domainRoot);
@@ -197,7 +148,7 @@ export default async function checkDomain(): Promise<void> {
 			issues.push({
 				file: domainRoot,
 				line: 1,
-				message: `Domain folder not found for context "${context.name}"`
+				message: `Domain folder not found for context "${context}"`
 			});
 			continue;
 		}

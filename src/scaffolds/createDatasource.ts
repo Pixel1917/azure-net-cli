@@ -1,13 +1,10 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import prompts from 'prompts';
+import { registerDatasource } from './registerDatasource.js';
 import { writeIfNotExists, updateIndexTs } from '../utils/fileUtils.js';
 import { toPascalCase } from '../utils/contextUtils.js';
-import { loadUserConfig } from '../utils/loadConfig.js';
-import { normalizeContexts } from '../init/initAliases.js';
 import { getFoundationConstructImportPath, getFoundationConstructPath, getSharedState } from '../utils/sharedFoundation.js';
-
-type ContextChoice = { title: string; value: string };
 
 const createDatasourceTemplateWithoutResponse = (
 	className: string
@@ -49,20 +46,8 @@ export class ${className} extends BaseHttpDatasource {
 `;
 
 const ensureDatasourceClassName = (rawName: string): string => {
-	const normalized = toPascalCase(rawName || 'MockApi');
+	const normalized = toPascalCase(rawName || 'ApiHttpDatasource');
 	return normalized.endsWith('Datasource') ? normalized : `${normalized}Datasource`;
-};
-
-const getContextChoices = async (): Promise<ContextChoice[]> => {
-	const config = await loadUserConfig();
-	const contexts = normalizeContexts(config.contexts);
-
-	const choices: ContextChoice[] = [{ title: 'shared foundation', value: '__shared__' }];
-	for (const context of contexts) {
-		choices.push({ title: context.name, value: context.name });
-	}
-
-	return choices;
 };
 
 const getSharedResponses = async (): Promise<string[]> => {
@@ -88,34 +73,16 @@ const hasResponseInterface = async (responseName: string): Promise<boolean> => {
 	}
 };
 
-const resolveTargetPath = (target: string): string => {
-	if (target === '__shared__') {
-		throw new Error('Shared target path must be resolved async.');
-	}
-
-	return path.join(process.cwd(), 'src', 'app', target, 'layers', 'infrastructure', 'http', 'datasources');
-};
-
 export default async function createDatasource(): Promise<void> {
 	const { datasourceNameRaw } = await prompts({
 		type: 'text',
 		name: 'datasourceNameRaw',
 		message: 'Datasource name:',
-		initial: 'MockApi'
+		initial: 'ApiHttpDatasource'
 	});
 
-	const className = ensureDatasourceClassName(String(datasourceNameRaw ?? 'MockApi'));
+	const className = ensureDatasourceClassName(String(datasourceNameRaw ?? 'ApiHttpDatasource'));
 
-	const contextChoices = await getContextChoices();
-	const { target } = await prompts({
-		type: 'select',
-		name: 'target',
-		message: 'Where to create datasource?',
-		choices: contextChoices,
-		initial: 0
-	});
-
-	const selectedTarget = String(target ?? '__shared__');
 	const sharedResponses = await getSharedResponses();
 
 	let selectedResponse: string | null = null;
@@ -142,10 +109,7 @@ export default async function createDatasource(): Promise<void> {
 			: createDatasourceTemplateWithResponse(className, selectedResponse, responseImportPath);
 	}
 
-	const targetPath =
-		selectedTarget === '__shared__'
-			? getFoundationConstructPath((await getSharedState()).sharedContext.name, 'datasource')
-			: resolveTargetPath(selectedTarget);
+	const targetPath = getFoundationConstructPath((await getSharedState()).sharedContext.name, 'datasource');
 	await fs.mkdir(targetPath, { recursive: true });
 
 	const filePath = path.join(targetPath, `${className}.ts`);
@@ -157,5 +121,6 @@ export default async function createDatasource(): Promise<void> {
 		return;
 	}
 
+	await registerDatasource(className);
 	console.log(`✅ Datasource created: ${filePath}`);
 }
