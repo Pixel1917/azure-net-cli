@@ -1,3 +1,4 @@
+import { migrateTranslationsSources } from './translations.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -8,7 +9,8 @@ import { VITE_CONFIGS } from '../utils/viteConfig.js';
 import { mergePackageImports, resolvePackageImport } from '../utils/packageImports.js';
 import { flattenConfigLiterals } from '../utils/flattenConfig.js';
 import { parseSource } from '../checks/architecture.js';
-import { migrateAsyncHelpers, migratePresenterSource } from './presenters.js';
+import { inspectFactories, replaceFactory, type FactoryDefinition } from './presenterFactories.js';
+import { migrateAsyncHelpers, migratePresenterSource, type PresenterDependencies } from './presenters.js';
 
 export type MigrationIssue = { file: string; reason: string };
 export type MigrationPlan = {
@@ -277,8 +279,12 @@ export async function planMigration(root = process.cwd()): Promise<MigrationPlan
 	const presenterNames = new Map<string, Map<string, string>>();
 	const upgradedSources = new Map<string, string>();
 	const factorySymbols = new Map<string, Set<string>>();
+	const factoryDefinitions = new Map<string, FactoryDefinition[]>();
+	const legacyFactories = new Set<FactoryDefinition>();
+	const consumedFactories = new Set<FactoryDefinition>();
 	for (const [file, bytes] of originals) {
 		if (!/\.[jt]s$/.test(file)) continue;
+		factoryDefinitions.set(file, inspectFactories(bytes.toString(), file));
 		const source = parseSource(bytes.toString(), file);
 		const creators = new Set<string>();
 		for (const statement of source.statements) {
@@ -315,6 +321,8 @@ export async function planMigration(root = process.cwd()): Promise<MigrationPlan
 		if (mapping.has(file) && isBackup(mapping.get(file)!)) continue;
 		const source = parseSource(bytes.toString(), file);
 		const factories = new Set<string>();
+		const dependencies = new Map<string, PresenterDependencies>();
+		const definitions = new Map<string, FactoryDefinition>();
 		for (const statement of source.statements) {
 			if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
 			const bindings = statement.importClause?.namedBindings;
@@ -330,11 +338,30 @@ export async function planMigration(root = process.cwd()): Promise<MigrationPlan
 					(symbol && factorySymbols.get(symbol.file)?.has(symbol.name))
 				)
 					factories.add(binding.name.text);
+				if (symbol) {
+					const definition = factoryDefinitions.get(symbol.file)?.find((value) => value.name === symbol.name);
+					if (definition) {
+						let module = slash(path.relative(path.dirname(file), symbol.file)).replace(/\.[jt]s$/, '');
+						if (!module.startsWith('.')) module = './' + module;
+						dependencies.set(binding.name.text, { ...definition, source: module });
+						definitions.set(binding.name.text, definition);
+					}
+				}
 			}
 		}
 		const result = file.endsWith('.svelte')
 			? { content: bytes.toString(), converted: new Map<string, string>(), issues: [] }
-			: migratePresenterSource(bytes.toString(), file, factories);
+			: migratePresenterSource(bytes.toString(), file, factories, dependencies);
+		for (const [local, definition] of definitions) {
+			if (result.converted.size) consumedFactories.add(definition);
+			const remaining = ts.createSourceFile(file, result.content, ts.ScriptTarget.Latest, true);
+			const visit = (node: ts.Node): void => {
+				if (ts.isImportDeclaration(node)) return;
+				if (ts.isIdentifier(node) && node.text === local) legacyFactories.add(definition);
+				ts.forEachChild(node, visit);
+			};
+			visit(remaining);
+		}
 		if (result.converted.size) presenterNames.set(file, result.converted);
 		for (const reason of result.issues) issue(file, reason);
 		let upgraded = result.content;
@@ -344,6 +371,88 @@ export async function planMigration(root = process.cwd()): Promise<MigrationPlan
 			issue(file, `Async helpers need manual migration: ${String(error)}`);
 		}
 		if (upgraded !== bytes.toString()) upgradedSources.set(file, upgraded);
+	}
+	for (const [file, definitions] of factoryDefinitions) {
+		let content = originals.get(file)!.toString();
+		let changed = false;
+		for (const definition of definitions) {
+			if (!consumedFactories.has(definition)) continue;
+			const keepLegacy = legacyFactories.has(definition);
+			content = replaceFactory(content, file, definition, keepLegacy);
+			changed = true;
+			if (!keepLegacy) {
+				const names = presenterNames.get(file) ?? new Map<string, string>();
+				names.set(definition.name, definition.exportName);
+				presenterNames.set(file, names);
+			} else issue(file, 'Some factory consumers could not be migrated; legacy factory retained alongside explicit dependencies.');
+		}
+		if (changed) {
+			try {
+				content = migrateAsyncHelpers(content, file);
+			} catch (error) {
+				issue(file, String(error));
+			}
+			upgradedSources.set(file, content);
+		}
+	}
+	const translationMigration = migrateTranslationsSources(
+		new Map(
+			[...originals]
+				.filter(([file]) => file.startsWith(path.join(root, 'src') + path.sep))
+				.map(([file, bytes]) => [file, upgradedSources.get(file) ?? bytes.toString()])
+		),
+		resolve
+	);
+	for (const [file, content] of translationMigration.updates) upgradedSources.set(file, content);
+	for (const problem of translationMigration.issues) issue(problem.file, problem.reason);
+
+	for (const [file, bytes] of originals) {
+		if (!/\.[jt]s$/.test(file) || isBackup(mapping.get(file) ?? file)) continue;
+		const source = parseSource(upgradedSources.get(file) ?? bytes.toString(), file);
+		const removed = new Set(['createPresenterFactory', 'createPresenter', 'createStoreFactory', 'createStore', 'createAsyncHelpers']);
+		const apps = new Set<string>();
+		for (const statement of source.statements) {
+			if (
+				!ts.isImportDeclaration(statement) ||
+				!ts.isStringLiteral(statement.moduleSpecifier) ||
+				!['@azure-net/kit', '@azure-net/kit/delivery'].includes(statement.moduleSpecifier.text)
+			)
+				continue;
+			const bindings = statement.importClause?.namedBindings;
+			if (!bindings || !ts.isNamedImports(bindings)) continue;
+			for (const binding of bindings.elements) {
+				const name = (binding.propertyName ?? binding.name).text;
+				if (removed.has(name)) issue(file, 'Removed kit API ' + name + ' remains; manual migration is required before build.');
+				if (name === 'createApp') apps.add(binding.name.text);
+			}
+		}
+		const inspect = (node: ts.Node): void => {
+			if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && apps.has(node.expression.text)) {
+				const callback = node.arguments[0];
+				if (callback && (ts.isArrowFunction(callback) || ts.isFunctionExpression(callback))) {
+					const parameter = callback.parameters[0]?.name;
+					const check = (child: ts.Node): void => {
+						if (
+							ts.isCallExpression(child) &&
+							ts.isPropertyAccessExpression(child.expression) &&
+							child.expression.name.text === 'dependencies'
+						) {
+							let base: ts.Expression = child.expression.expression;
+							while (ts.isCallExpression(base) && ts.isPropertyAccessExpression(base.expression)) base = base.expression.expression;
+							if (parameter && ts.isIdentifier(parameter) && ts.isIdentifier(base) && base.text === parameter.text)
+								issue(
+									file,
+									'createApp.dependencies/Container was removed. Move these bindings to a DiContainer; consumer changes require manual review.'
+								);
+						}
+						ts.forEachChild(child, check);
+					};
+					check(callback.body);
+				}
+			}
+			ts.forEachChild(node, inspect);
+		};
+		inspect(source);
 	}
 	// Every supported old provider is expanded into private locals inside one request-scoped register.
 	type Provider = {
@@ -624,7 +733,7 @@ export async function planMigration(root = process.cwd()): Promise<MigrationPlan
 						const declared = symbol?.file ?? target;
 						const to = mapping.get(declared) ?? declared;
 						const isProvider = converted.has(name) && providers.get(name)?.file === declared;
-						const spec = isProvider ? '#platform/Foundation/DI' : isBackup(to) ? undefined : specifier(to, destination);
+						const spec = isProvider ? '#platform/Foundation/DI/ApplicationProvider' : isBackup(to) ? undefined : specifier(to, destination);
 						if (!spec) {
 							issue(destination, `Unresolved imported symbol ${name} from ${node.moduleSpecifier.text}`);
 							continue;
@@ -736,6 +845,7 @@ export async function planMigration(root = process.cwd()): Promise<MigrationPlan
 	for (const [file, bytes] of originals) {
 		if (!file.startsWith(path.join(root, 'src') + path.sep)) continue;
 		const to = mapping.get(file) ?? file;
+		if (!oldRoots.size && !upgradedSources.size) continue;
 		const output =
 			isBackup(to) || !textFile.test(file) ? bytes : Buffer.from(rewrite(file, to, upgradedSources.get(file) ?? bytes.toString()));
 		if (writes.has(to) && path.basename(to) === 'index.ts') {

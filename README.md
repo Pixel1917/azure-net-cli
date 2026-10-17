@@ -60,7 +60,7 @@ classes plus accessors. The migrator preserves lexical state through a private
 state object and rewrites named consumer imports/re-exports to the accessor,
 retaining their local aliases. Async-helper factories are replaced by direct
 function references, preserving explicit custom error types. Unsupported custom
-injections and dynamic consumer imports are listed in the migration report for
+unresolved injections and dynamic consumer imports are listed in the migration report for
 manual review. Original files remain in the migration snapshot.
 
 `scoped` means request-cached on the server and new-per-call in the browser, not
@@ -187,3 +187,15 @@ it writes `state.currLocale` and dictionary snapshots automatically. Call
 in useClient. Templates include these integration hints. In components use
 `t(key)` and `manager.locale`, not `$t` / `$locale`. No separate translations
 package, exportState or restoreState is required.
+
+### Presenter and translation API migration
+
+- Presenter factory imports are resolved through local modules and barrels, including aliases.
+- Statically declared custom injections (for example notification/modal accessors) become constructor arguments. The factory module retains a plain exported dependency object, not a createPresenterFactory call.
+- Async helpers are imported from @azure-net/kit/delivery; factory-specific error types are preserved with type-only specialization. Custom overrides are injected rather than replaced with kit helpers.
+- Closures, mutable private variables and detached callbacks are retained behind class accessors. Registration uses RegisterProvider with scoped lifecycle. Consumers and re-exports are updated.
+- Opaque spreads, getter-based injection definitions, local per-presenter injection overrides, explicit factory result types and unsupported return shapes require manual review. No application configuration is executed to infer their meaning.
+- A single identifiable translation manager is connected to useTranslations before the existing bootstrap chain. Known zero-argument legacy preload/initialization calls become resolved promises so existing helper consumers remain compatible. Custom locale resolvers and ambiguous managers are not rewritten automatically.
+- Existing bootstrap dependencies/Container usage, stores and other removed kit APIs are not converted into new application-specific state architecture by this migration. Check the resulting project and migration report before publishing.
+
+Run azure-net migrate --dry-run first. Migration also works on presenters left behind in an already migrated Contexts/Presentation/Platform structure.

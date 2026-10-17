@@ -69,10 +69,20 @@ export function migrateAsyncHelpers(input: string, file: string): string {
 	const visit = (node: ts.Node) => {
 		if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && factories.has(node.expression.text) && !node.arguments.length) {
 			const errorType = node.typeArguments?.[0]?.getText(source);
+			let keys = [...helperNames];
+			const parent = node.parent;
+			if (
+				ts.isVariableDeclaration(parent) &&
+				ts.isObjectBindingPattern(parent.name) &&
+				!parent.name.elements.some((b) => b.dotDotDotToken)
+			) {
+				keys = parent.name.elements.map((b) => (b.propertyName ?? b.name).getText(source));
+				if (keys.some((key) => !helperNames.has(key))) throw new Error('Removed async helper members require manual migration');
+			}
 			edits.push({
 				start: node.getStart(source),
 				end: node.end,
-				text: `({ createAsyncAction: ${specialize(action, errorType)}, createAsyncResource: ${specialize(resource, errorType)} })`
+				text: `({ ${keys.map((key) => `${key}: ${specialize(key === 'createAsyncAction' ? action : resource, errorType)}`).join(', ')} })`
 			});
 			return;
 		}
@@ -82,8 +92,20 @@ export function migrateAsyncHelpers(input: string, file: string): string {
 	return apply(input, edits);
 }
 
-/** Upgrade only recognized factories; arbitrary injected dependencies require a human decision. */
-export function migratePresenterSource(input: string, file: string, factories: Set<string>) {
+export interface PresenterDependencies {
+	source: string;
+	exportName: string;
+	keys: Set<string>;
+	helpers: Set<string>;
+}
+
+/** Preserve lexical behavior while moving instance creation and dependencies to RegisterProvider. */
+export function migratePresenterSource(
+	input: string,
+	file: string,
+	factories: Set<string>,
+	dependencies = new Map<string, PresenterDependencies>()
+) {
 	const source = ts.createSourceFile(file, input, ts.ScriptTarget.Latest, true);
 	const edits: Edit[] = [];
 	const converted = new Map<string, string>();
@@ -91,6 +113,19 @@ export function migratePresenterSource(input: string, file: string, factories: S
 	const imports = new Set<string>();
 	const removedFactories = new Set<string>();
 	const existingImports = new Set<string>();
+	const dependencyImports: string[] = [];
+	const occupied = new Set<string>();
+	const collectNames = (node: ts.Node): void => {
+		if (ts.isIdentifier(node)) occupied.add(node.text);
+		ts.forEachChild(node, collectNames);
+	};
+	collectNames(source);
+	const unique = (base: string) => {
+		let value = base;
+		while (occupied.has(value)) value += '_';
+		occupied.add(value);
+		return value;
+	};
 	for (const statement of source.statements) {
 		if (
 			!ts.isImportDeclaration(statement) ||
@@ -106,6 +141,8 @@ export function migratePresenterSource(input: string, file: string, factories: S
 					existingImports.add(entry.propertyName ? `${entry.propertyName.text} as ${entry.name.text}` : entry.name.text);
 			}
 	}
+	const existingRegistration = [...existingImports].find((name) => name === 'RegisterProvider' || name.startsWith('RegisterProvider as '));
+	const registrationName = existingRegistration ? existingRegistration.split(' as ').at(-1)! : unique('RegisterProvider');
 	for (const statement of source.statements) {
 		if (!ts.isVariableStatement(statement) || statement.declarationList.declarations.length !== 1) continue;
 		const declaration = statement.declarationList.declarations[0]!;
@@ -120,6 +157,7 @@ export function migratePresenterSource(input: string, file: string, factories: S
 			continue;
 		const name = declaration.name.text;
 		try {
+			if (call.typeArguments?.length || declaration.type) throw new Error('Explicit factory result types require manual review');
 			const callback = call.arguments.find((arg) => ts.isArrowFunction(arg) || ts.isFunctionExpression(arg));
 			if (
 				!callback ||
@@ -129,18 +167,54 @@ export function migratePresenterSource(input: string, file: string, factories: S
 				callback.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword)
 			)
 				throw new Error('Expected a synchronous block factory');
-			if (call.arguments.length !== 2 || !ts.isStringLiteral(call.arguments[0]!))
+			if (
+				!(
+					(call.arguments.length === 2 && ts.isStringLiteral(call.arguments[0]!)) ||
+					(call.arguments.length === 1 && call.arguments[0] === callback)
+				)
+			)
 				throw new Error('Custom factory arguments need manual review');
 			const requestedImports = new Set<string>();
+			const dependency = dependencies.get(call.expression.text);
+			const dependencyAlias = unique(name + 'Dependencies');
+			const extraParameters: string[] = [];
+			const extraArguments: string[] = [];
+			const extraRegistrations: string[] = [];
+			const helperSetup: string[] = [];
+			const javascript = file.endsWith('.js');
+			let needsDependencyImport = false;
+			let runtimeDependencyImport = false;
 			if (callback.parameters.length) {
 				const param = callback.parameters[0]!;
 				if (callback.parameters.length !== 1 || !ts.isObjectBindingPattern(param.name) || param.initializer)
 					throw new Error('Unsupported injected dependencies');
 				for (const binding of param.name.elements) {
 					const original = (binding.propertyName ?? binding.name).getText(source);
-					if (!helperNames.has(original) || !ts.isIdentifier(binding.name) || binding.initializer || binding.dotDotDotToken)
-						throw new Error(`Injected dependency ${original} requires manual conversion`);
-					requestedImports.add(original === binding.name.text ? original : `${original} as ${binding.name.text}`);
+					if (!ts.isIdentifier(binding.name) || binding.initializer || binding.dotDotDotToken)
+						throw new Error('Nested, default or rest injected bindings need manual conversion');
+					if (dependency) {
+						if (!dependency.keys.has(original) && helperNames.has(original)) {
+							requestedImports.add(original === binding.name.text ? original : `${original} as ${binding.name.text}`);
+							continue;
+						}
+						if (!dependency.keys.has(original)) throw new Error(`Injected dependency ${original} is not statically known in its factory`);
+						if (helperNames.has(original) && dependency.helpers.has(original)) {
+							const helperAlias = unique('kit' + original[0]!.toUpperCase() + original.slice(1));
+							requestedImports.add(`${original} as ${helperAlias}`);
+							helperSetup.push(
+								`const ${binding.name.text}${javascript ? '' : ': typeof ' + dependencyAlias + '[' + JSON.stringify(original) + ']'} = ${helperAlias};`
+							);
+							if (!javascript) needsDependencyImport = true;
+						} else {
+							needsDependencyImport = runtimeDependencyImport = true;
+							extraParameters.push(`${binding.name.text}: typeof ${dependencyAlias}[${JSON.stringify(original)}]`);
+							extraArguments.push(binding.name.text);
+							extraRegistrations.push(`${dependencyAlias}[${JSON.stringify(original)}]`);
+						}
+					} else {
+						if (!helperNames.has(original)) throw new Error(`Injected dependency ${original} requires manual conversion`);
+						requestedImports.add(original === binding.name.text ? original : `${original} as ${binding.name.text}`);
+					}
 				}
 			}
 			const statements = [...callback.body.statements];
@@ -154,14 +228,22 @@ export function migratePresenterSource(input: string, file: string, factories: S
 			const result = statements.at(-1);
 			if (!result || !ts.isReturnStatement(result) || !result.expression || !ts.isObjectLiteralExpression(result.expression))
 				throw new Error('Expected a final object-literal return');
+			const validateFlow = (node: ts.Node): void => {
+				if (ts.isFunctionLike(node) || ts.isClassLike(node)) return;
+				if (ts.isReturnStatement(node) && node !== result) throw new Error('Conditional early returns require manual conversion');
+				if (ts.isIdentifier(node) && node.text === 'arguments') throw new Error('Factory arguments binding requires manual conversion');
+				ts.forEachChild(node, validateFlow);
+			};
+			validateFlow(callback.body);
 			const keys = result.expression.properties.map((prop) => {
 				if (!prop.name || !ts.isIdentifier(prop.name)) throw new Error('Spread/computed return keys require manual conversion');
 				if (prop.name.text === 'constructor') throw new Error('Reserved presenter member');
 				return prop.name.text;
 			});
 			if (new Set(keys).size !== keys.length) throw new Error('Duplicate return keys');
-			const parameters: string[] = [];
-			const argumentsList: string[] = [];
+			const parameters: string[] = [...extraParameters];
+			const argumentsList: string[] = [...extraArguments];
+			const registrationArguments = [...extraRegistrations];
 			const registrations: string[] = [];
 			const body = statements.filter((stmt) => {
 				if (!ts.isVariableStatement(stmt) || stmt.declarationList.declarations.length !== 1) return true;
@@ -182,6 +264,7 @@ export function migratePresenterSource(input: string, file: string, factories: S
 					const key = (entry.propertyName ?? entry.name).getText(source).replace(/^['"]|['"]$/g, '');
 					parameters.push(`${entry.name.text}: ReturnType<typeof ${value.expression.text}>[${JSON.stringify(key)}]`);
 					argumentsList.push(entry.name.text);
+					registrationArguments.push(entry.name.text);
 				}
 				registrations.push(stmt.getText(source));
 				return false;
@@ -189,7 +272,6 @@ export function migratePresenterSource(input: string, file: string, factories: S
 			// Keep lexical state and callbacks intact rather than guessing this-binding rewrites.
 			const setup = `create${name}State`;
 			if (new RegExp(`\\b(?:use${name}|${setup})\\b`).test(input)) throw new Error('Generated declaration name already exists');
-			const javascript = file.endsWith('.js');
 			const parameterList = (javascript ? argumentsList : parameters).join(', ');
 			const members = result.expression.properties.map((property, index) => {
 				const key = keys[index]!;
@@ -200,11 +282,15 @@ export function migratePresenterSource(input: string, file: string, factories: S
 						: `\nset ${key}(value${javascript ? '' : `: ReturnType<typeof ${setup}>[${JSON.stringify(key)}]`}) { this.#state.${key} = value; }`)
 				);
 			});
-			const text = `function ${setup}(${parameterList})${callback.type ? ': ' + callback.type.getText(source) : ''} {\n${body.map((stmt) => stmt.getText(source)).join('\n')}\n}\n\nexport class ${name} {\n#state${javascript ? '' : `: ReturnType<typeof ${setup}>`};\nconstructor(${parameterList}) { this.#state = ${setup}(${argumentsList.join(', ')}); }\n${members.join('\n')}\n}\n\nexport const use${name} = RegisterProvider(() => {\n${registrations.join('\n')}\nreturn new ${name}(${argumentsList.join(', ')});\n}, 'scoped');`;
+			const text = `function ${setup}(${parameterList})${callback.type ? ': ' + callback.type.getText(source) : ''} {\n${helperSetup.join('\n')}\n${body.map((stmt) => stmt.getText(source)).join('\n')}\n}\n\nexport class ${name} {\n#state${javascript ? '' : `: ReturnType<typeof ${setup}>`};\nconstructor(${parameterList}) { this.#state = ${setup}(${argumentsList.join(', ')}); }\n${members.join('\n')}\n}\n\nexport const use${name} = ${registrationName}(() => {\n${registrations.join('\n')}\nreturn new ${name}(${registrationArguments.join(', ')});\n}, 'scoped');`;
+			if (needsDependencyImport && dependency)
+				dependencyImports.push(
+					`import ${runtimeDependencyImport ? '' : 'type '}{ ${dependency.exportName} as ${dependencyAlias} } from ${JSON.stringify(dependency.source)};`
+				);
 			edits.push({ start: statement.getStart(source), end: statement.end, text });
 			converted.set(name, `use${name}`);
 			removedFactories.add(call.expression.text);
-			imports.add('RegisterProvider');
+			imports.add(registrationName === 'RegisterProvider' ? 'RegisterProvider' : `RegisterProvider as ${registrationName}`);
 			for (const helper of requestedImports) imports.add(helper);
 		} catch (error) {
 			issues.push(`${name}: ${String(error)}. Original presenter retained.`);
@@ -257,12 +343,41 @@ export function migratePresenterSource(input: string, file: string, factories: S
 		}
 		const neededImports = [...imports].filter((name) => !existingImports.has(name));
 		output =
-			(neededImports.length ? `import { ${neededImports.join(', ')} } from '@azure-net/kit/delivery';\n` : '') + apply(output, importEdits);
+			dependencyImports.join('\n') +
+			'\n' +
+			(neededImports.length ? `import { ${neededImports.join(', ')} } from '@azure-net/kit/delivery';\n` : '') +
+			apply(output, importEdits);
 		const updated = ts.createSourceFile(file, output, ts.ScriptTarget.Latest, true);
+		// Bind only this in-memory module: distinguish lexical shadows without loading dependencies.
+		const options: ts.CompilerOptions = { noLib: true, noResolve: true, target: ts.ScriptTarget.ES2022 };
+		const host = ts.createCompilerHost(options);
+		host.getSourceFile = (name) => (name === file ? updated : undefined);
+		host.fileExists = (name) => name === file;
+		host.readFile = (name) => (name === file ? output : undefined);
+		const checker = ts.createProgram([file], options, host).getTypeChecker();
+		const symbols = new Map<ts.Symbol, string>();
+		for (const statement of updated.statements) {
+			if (!ts.isClassDeclaration(statement) || !statement.name || !converted.has(statement.name.text)) continue;
+			const symbol = checker.getSymbolAtLocation(statement.name);
+			if (symbol) symbols.set(symbol, converted.get(statement.name.text)!);
+		}
 		const references: Edit[] = [];
 		const visit = (node: ts.Node) => {
-			if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && converted.has(node.expression.text)) {
-				references.push({ start: node.expression.getStart(updated), end: node.expression.end, text: converted.get(node.expression.text)! });
+			if (ts.isShorthandPropertyAssignment(node)) {
+				const symbol = checker.getShorthandAssignmentValueSymbol(node);
+				const name = symbol && symbols.get(symbol);
+				if (name) {
+					references.push({ start: node.getStart(updated), end: node.end, text: `${node.name.text}: ${name}` });
+					return;
+				}
+			}
+			if (ts.isIdentifier(node) && converted.has(node.text)) {
+				const parent = node.parent;
+				const declaration = ts.isClassDeclaration(parent) && parent.name === node;
+				const construction = ts.isNewExpression(parent) && parent.expression === node;
+				const symbol = checker.getSymbolAtLocation(node);
+				const name = symbol && symbols.get(symbol);
+				if (name && !declaration && !construction) references.push({ start: node.getStart(updated), end: node.end, text: name });
 			}
 			ts.forEachChild(node, visit);
 		};
