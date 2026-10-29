@@ -149,14 +149,20 @@ export default async function checkPresenterNames() {
         const parts = location(filePath);
         if (parts[0] !== 'Presentation' || parts[2] !== 'Scopes')
             continue;
-        if (parts.slice(3, -1).some((part) => /^(?:stores?|schemas?)$/i.test(part)))
-            continue;
         const basename = path.basename(filePath).replace(/(?:\.(?:svelte|d))?\.[^.]+$/, '');
-        if (/(?:Store|Schema)$/.test(basename))
-            continue;
+        const presenterDirectory = parts.slice(3, -1).includes('Presenters');
+        const presenterFile = basename.endsWith('Presenter');
         const source = parseSource(content, filePath);
         const visit = (node) => {
             if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+                const exported = ts.isClassDeclaration(node)
+                    ? node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)
+                    : ts.isVariableDeclaration(node.parent) &&
+                        ts.isVariableDeclarationList(node.parent.parent) &&
+                        ts.isVariableStatement(node.parent.parent.parent) &&
+                        node.parent.parent.parent.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword);
+                if (!presenterDirectory && !node.name?.text.endsWith('Presenter') && !(presenterFile && exported))
+                    return;
                 classCount += 1;
                 const line = source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
                 if (!node.name || !/^[A-Z][A-Za-z0-9]*Presenter$/.test(node.name.text))

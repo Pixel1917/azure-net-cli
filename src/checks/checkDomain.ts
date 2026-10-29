@@ -21,15 +21,28 @@ export default async function checkDomain(): Promise<void> {
 				issues.push({ file, line: source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1, message });
 			};
 			const basename = path.basename(file).replace(/(?:\.d)?\.[^.]+$/, '');
-			const suffix = parts.includes('Resources')
-				? 'Resource'
-				: parts.includes('Repositories')
-					? 'Repository'
-					: parts.includes('UseCases')
-						? 'UseCases'
-						: parts.includes('Services')
-							? 'Service'
-							: null;
+			const resourceIndex = parts.indexOf('Resources');
+			const resource = domain && resourceIndex >= 0;
+			const resourcePart = resource && parts.slice(resourceIndex + 1, -1).some((part) => part.endsWith('Resource'));
+			const resourceDeclarations = source.statements.filter(
+				(statement) =>
+					(ts.isClassDeclaration(statement) || ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement)) &&
+					statement.name?.text.endsWith('Resource') &&
+					statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)
+			);
+			if (resource && basename !== 'index') {
+				if ((!resourcePart || resourceDeclarations.length > 0) && !basename.endsWith('Resource'))
+					issue(source, 'File name must end with Resource');
+				if (basename.endsWith('Resource') && resourceDeclarations.length === 0)
+					issue(source, 'Resource file must export a class/interface/type whose name ends with Resource');
+			}
+			const suffix = parts.includes('Repositories')
+				? 'Repository'
+				: parts.includes('UseCases')
+					? 'UseCases'
+					: parts.includes('Services')
+						? 'Service'
+						: null;
 			if (context && suffix && basename !== 'index' && !basename.endsWith(suffix)) issue(source, `File name must end with ${suffix}`);
 			if (domain && basename === 'index' && !exportOnly(content))
 				issue(source, 'index.ts must contain only exports. Move declarations to separate files');

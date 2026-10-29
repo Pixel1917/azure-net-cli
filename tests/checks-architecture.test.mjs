@@ -588,6 +588,70 @@ test('scope presenter classes and files require Presenter suffix, excluding stor
 		await check(presenters);
 	}));
 
+test('helpers and stores are not presenters, including classes registered through RegisterProvider', () =>
+	fixture(async (write) => {
+		const root = 'src/app/Presentation/Public/Scopes/Content';
+		for (const file of ['Helpers/PageLoader.ts', 'Helpers/PageBlockCollectionResolver.ts', 'Page.ts', 'State.ts', 'Stores/State.ts'])
+			await write(`${root}/${file}`, 'export class Helper { constructor(useCases: IPageUseCases) {} }');
+		await write(`${root}/index.ts`, 'export const useState = RegisterProvider(() => new State());');
+		await write(`${root}/PagePresenter.ts`, 'class InternalHelper {} export class PagePresenter {}');
+		await write(`${root}/Presenters/OtherPresenter.ts`, 'export class OtherPresenter {}');
+		assert.match(await check(presenters), /Analyzed 2 scope presenter classes/);
+	}));
+
+test('explicit presenter markers catch invalid names even in helper or store directories', () =>
+	fixture(async (write) => {
+		const root = 'src/app/Presentation/Public/Scopes/Content';
+		for (const [file, code, expected] of [
+			['Presenters/Page.ts', 'export class Page {}', /class name must end with Presenter/],
+			['Helpers/Page.ts', 'export class PagePresenter {}', /file name must end with Presenter/],
+			['Stores/PagePresenter.ts', 'export class Page {}', /class name must end with Presenter/],
+			['PageStore.ts', 'export class PagePresenter {}', /file name must end with Presenter/],
+			['PagePresenter.ts', 'export const Page = class {};', /class name must end with Presenter/]
+		]) {
+			await write(`${root}/${file}`, code);
+			assert.match(await check(presenters, true), expected);
+			await fs.rm(`${root}/${file}`);
+		}
+	}));
+
+test('resource composition allows nested parts and supporting interfaces in the main resource file', () =>
+	fixture(async (write) => {
+		const root = 'src/app/Contexts/Orders/Order/Domain/Resources';
+		await write(
+			`${root}/PageResource/PageResource.ts`,
+			`
+export interface IPageParam { value: string }
+interface IPageProductVariation { id: string }
+export interface IPageResource { params: IPageParam[]; variations: IPageProductVariation[] }
+`
+		);
+		await write(`${root}/PageResource/PageBlock.ts`, 'export interface IPageBlock {} export type TBlock = IPageBlock;');
+		await write(`${root}/PageResource/Blocks/AccordionBlock.ts`, 'export interface IAccordionBlock {}');
+		await write(`${root}/PageResource/Blocks/index.ts`, "export * from './AccordionBlock';");
+		await write(`${root}/SummaryResource.ts`, 'export type ISummaryResource = { id: string }; export interface IDetails {}');
+		await write(`${root}/Groups/OtherResource.ts`, 'export class OtherResource {}');
+		await check(domain);
+	}));
+
+test('resource naming remains strict for standalone contracts and explicit resource files', () =>
+	fixture(async (write) => {
+		const root = 'src/app/Contexts/Orders/Order/Domain/Resources';
+		for (const [file, code, expected] of [
+			['Page.ts', 'export interface IPage {}', /File name must end with Resource/],
+			['Groups/Page.ts', 'export interface IPage {}', /File name must end with Resource/],
+			['PageResource.ts', 'export interface IPage {}', /must export.*ends with Resource/],
+			['PageResource/PageResource.ts', 'interface IPageResource {}', /must export.*ends with Resource/],
+			['PageResource/Blocks/Other.ts', 'export interface IOtherResource {}', /File name must end with Resource/],
+			['PageResource/Blocks/Block.ts', 'export interface Block {}', /must start with "I"/],
+			['PageResource/Blocks/Block.ts', 'export type Block = string;', /must start with "I" or "T"/]
+		]) {
+			await write(`${root}/${file}`, code);
+			assert.match(await check(domain, true), expected);
+			await fs.rm(`${root}/${file}`);
+		}
+	}));
+
 test('current provider APIs discover one service container and two unnamed composition roots', () =>
 	fixture(async (write) => {
 		await write(

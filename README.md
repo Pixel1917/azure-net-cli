@@ -122,6 +122,8 @@ azure-net generate component composition
 - App directory names use PascalCase letters/digits. Framework filenames outside app retain their framework conventions.
 - Consts, utils and common directories are forbidden (case-insensitive). Shared is reserved for Presentation/Shared.
 - Context interfaces use I prefix. Resources, enums, repositories, use cases and presenters have their corresponding suffixes. Application/Services and Infrastructure services remain supported.
+- Presenter classes are identified by a Presenters directory, a class name ending in Presenter, or an exported class in a Presenter file. Other scope helpers/stores are not presenters; RegisterProvider does not imply a presenter.
+- Standalone files in Domain/Resources require the Resource suffix. Inside a specific *Resource directory, constituent types (such as Blocks/AccordionBlock.ts) do not. A *Resource.ts file must export a Resource class/interface/type, but may also declare supporting types without that suffix. Interface I prefixes still apply to all parts.
 - Repository/use-case dependencies are typed by interfaces; presenter use-case dependencies are interfaces too. Inferred cookie/storage instances and presenter stores are not indiscriminately rejected.
 - Contexts do not contain top-level functions. Class methods and nested DI factories are allowed.
 - Imports are ordered runtime, types, then styles/other side-effect imports.
