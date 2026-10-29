@@ -5,11 +5,8 @@ import { format } from 'prettier';
 export const PACKAGE_IMPORTS = Object.fromEntries(
 	['Contexts', 'Presentation', 'Platform'].flatMap((name) => {
 		const key = '#' + name.toLowerCase(),
-			root = './src/app/' + name;
-		return [
-			[key, root + '/index.ts'],
-			[key + '/*', { types: [root + '/*.ts', root + '/*/index.ts', root + '/*'], default: root + '/*' }]
-		];
+			root = name === 'Platform' ? './src/platform' : './src/app/' + name;
+		return [[key + '/*', { types: [root + '/*.ts', root + '/*/index.ts', root + '/*'], default: root + '/*' }]];
 	})
 );
 export async function mergePackageImports(content: string): Promise<string> {

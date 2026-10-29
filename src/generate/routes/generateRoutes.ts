@@ -263,7 +263,7 @@ export default async function generateRoutes(): Promise<void> {
 	}
 
 	const groups = createGroupMap(routes, mode, resolver ?? undefined);
-	const outputDir = path.join(process.cwd(), 'src', 'app', 'Platform', 'Bootstrap', 'Routes');
+	const outputDir = path.join(process.cwd(), 'src', 'platform', 'Bootstrap', 'Routes');
 	const outputFile = path.join(outputDir, 'index.ts');
 
 	await fs.mkdir(outputDir, { recursive: true });

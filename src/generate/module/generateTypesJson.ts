@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import prompts from 'prompts';
 import ts from 'typescript';
-import { selectContext } from './repositoryModuleShared.js';
+import { selectAggregate, resolveDomainRootPath, selectContext } from './repositoryModuleShared.js';
 
 type InterfaceDeclaration = {
 	name: string;
@@ -136,8 +136,8 @@ const extractExistingRootKeys = (body: string): Set<string> => {
 	);
 };
 
-const listModelFiles = async (contextName: string): Promise<Array<{ name: string; path: string }>> => {
-	const modelRoot = path.join(process.cwd(), 'src', 'app', 'Contexts', contextName, 'Domain', 'Entities');
+const listModelFiles = async (contextName: string, aggregate: string): Promise<Array<{ name: string; path: string }>> => {
+	const modelRoot = path.join(resolveDomainRootPath(contextName, aggregate), 'Resources');
 	try {
 		const files = await fs.readdir(modelRoot);
 		return files
@@ -158,7 +158,9 @@ export default async function generateTypesJson(): Promise<void> {
 		return;
 	}
 
-	const models = await listModelFiles(contextName);
+	const aggregate = await selectAggregate(contextName);
+	if (!aggregate) return;
+	const models = await listModelFiles(contextName, aggregate);
 	if (!models.length) {
 		console.error(`❌ No model files found in context "${contextName}".`);
 		process.exitCode = 1;

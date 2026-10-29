@@ -1,126 +1,79 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import prompts from 'prompts';
-import { registerDatasource } from './registerDatasource.js';
 import { writeIfNotExists, updateIndexTs } from '../utils/fileUtils.js';
-import { toPascalCase } from '../utils/contextUtils.js';
-import { getFoundationConstructImportPath, getFoundationConstructPath, getSharedState } from '../utils/sharedFoundation.js';
-
-const createDatasourceTemplateWithoutResponse = (
-	className: string
-): string => `import { BaseHttpDatasource, type CreateRequestCallbackType } from '@azure-net/kit/infra';
-
-export class ${className} extends BaseHttpDatasource {
-\tasync createRequest<T>(callback: CreateRequestCallbackType<T>) {
-\t\treturn await this.createRawRequest<T>(callback);
-\t}
-}
-`;
-
-const createDatasourceTemplateWithResponseAndInterface = (
-	className: string,
-	responseName: string,
-	responseImportPath: string
-): string => `import { BaseHttpDatasource, type CreateRequestCallbackType } from '@azure-net/kit/infra';
-import { ${responseName}, type I${responseName} } from '${responseImportPath}';
-
-export class ${className} extends BaseHttpDatasource {
-\tasync createRequest<T>(callback: CreateRequestCallbackType<I${responseName}<T>>) {
-\t\treturn new ${responseName}<T>(await this.createRawRequest<I${responseName}<T>>(callback));
-\t}
-}
-`;
-
-const createDatasourceTemplateWithResponse = (
-	className: string,
-	responseName: string,
-	responseImportPath: string
-): string => `import { BaseHttpDatasource, type CreateRequestCallbackType } from '@azure-net/kit/infra';
-import { ${responseName} } from '${responseImportPath}';
-
-export class ${className} extends BaseHttpDatasource {
-\tasync createRequest<T>(callback: CreateRequestCallbackType<T>) {
-\t\treturn new ${responseName}<T>(await this.createRawRequest<T>(callback));
-\t}
-}
-`;
-
-const ensureDatasourceClassName = (rawName: string): string => {
-	const normalized = toPascalCase(rawName || 'ApiHttpDatasource');
-	return normalized.endsWith('Datasource') ? normalized : `${normalized}Datasource`;
-};
-
-const getSharedResponses = async (): Promise<string[]> => {
-	const { sharedContext } = await getSharedState();
-	const responsesPath = getFoundationConstructPath(sharedContext.name, 'response');
-	try {
-		const files = await fs.readdir(responsesPath);
-		return files.filter((file) => file.endsWith('.ts') && file !== 'index.ts').map((file) => file.replace(/\.ts$/, ''));
-	} catch {
-		return [];
-	}
-};
-
-const hasResponseInterface = async (responseName: string): Promise<boolean> => {
-	const { sharedContext } = await getSharedState();
-	const responsePath = path.join(getFoundationConstructPath(sharedContext.name, 'response'), `${responseName}.ts`);
-	try {
-		const content = await fs.readFile(responsePath, 'utf-8');
-		const interfaceRegex = new RegExp(`export\\s+interface\\s+I${responseName}\\b`);
-		return interfaceRegex.test(content);
-	} catch {
-		return false;
-	}
-};
+import { normalizePascalName, getPlatformPath } from '../utils/architecture.js';
+import { registerDatasource } from './registerDatasource.js';
 
 export default async function createDatasource(): Promise<void> {
 	const { datasourceNameRaw } = await prompts({
 		type: 'text',
 		name: 'datasourceNameRaw',
 		message: 'Datasource name:',
-		initial: 'ApiHttpDatasource'
+		initial: 'ApiDatasource'
 	});
-
-	const className = ensureDatasourceClassName(String(datasourceNameRaw ?? 'ApiHttpDatasource'));
-
-	const sharedResponses = await getSharedResponses();
-
-	let selectedResponse: string | null = null;
-	if (sharedResponses.length > 0) {
-		const { responseName } = await prompts({
+	if (datasourceNameRaw === undefined) return;
+	const normalized = normalizePascalName(String(datasourceNameRaw));
+	const className = normalized.endsWith('Datasource') ? normalized : `${normalized}Datasource`;
+	const responseRoot = path.join(getPlatformPath(), 'Foundation/Response');
+	let responses: string[] = [];
+	try {
+		responses = (await fs.readdir(responseRoot))
+			.filter((file) => file.endsWith('Response.ts') && !file.endsWith('.d.ts'))
+			.map((file) => file.slice(0, -3));
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+	}
+	let response: string | undefined;
+	if (responses.length) {
+		const answer = await prompts({
 			type: 'select',
 			name: 'responseName',
 			message: 'Select response for datasource:',
-			choices: [{ title: 'No response', value: null }, ...sharedResponses.map((response) => ({ title: response, value: response }))],
-			initial: 0
+			choices: [{ title: 'No response', value: '' }, ...responses.map((name) => ({ title: name, value: name }))]
 		});
-		selectedResponse = responseName ? String(responseName) : null;
+		response = answer.responseName || undefined;
+		if (response && !responses.includes(response)) throw new Error('Unknown response selected.');
 	}
-
-	let content: string;
-	if (!selectedResponse) {
-		content = createDatasourceTemplateWithoutResponse(className);
-	} else {
-		const { sharedAlias } = await getSharedState();
-		const responseImportPath = getFoundationConstructImportPath(sharedAlias, 'response');
-		const withInterface = await hasResponseInterface(selectedResponse);
-		content = withInterface
-			? createDatasourceTemplateWithResponseAndInterface(className, selectedResponse, responseImportPath)
-			: createDatasourceTemplateWithResponse(className, selectedResponse, responseImportPath);
+	let rawType = 'TData';
+	let resultType = 'IHttpServiceResponse<TData>';
+	let imports = '';
+	let generic = 'TData';
+	let localResultInterface = '';
+	if (response) {
+		const content = await fs.readFile(path.join(responseRoot, `${response}.ts`), 'utf8');
+		const declaration = content.match(new RegExp(`export\\s+(?:interface|type)\\s+I${response}\\s*<([^>]+)>`));
+		if (declaration) rawType = `I${response}<${declaration[1]!.includes(',') ? 'TData, TMeta' : 'TData'}>`;
+		generic = 'TData, TMeta = unknown';
+		resultType = `I${response}Result<TData, TMeta>`;
+		const hasResult = new RegExp(`export\\s+interface\\s+I${response}Result\\b`).test(content);
+		if (!hasResult)
+			localResultInterface = `interface I${response}Result<TData = unknown, TMeta = unknown> extends Pick<${response}<TData, TMeta>, keyof ${response}<TData, TMeta>> {}\n`;
+		imports = `import { ${response}${declaration ? `, type I${response}` : ''}${hasResult ? `, type I${response}Result` : ''} } from '#platform/Foundation/Response/${response}';\n`;
 	}
+	const root = path.join(getPlatformPath(), 'Foundation/Datasource');
+	const created = await writeIfNotExists(
+		path.join(root, `${className}.ts`),
+		`import { BaseHttpDatasource, type CreateRequestCallbackType${response ? '' : ', type IHttpServiceResponse'} } from '@azure-net/kit/infra';
+${imports}${localResultInterface}
+export interface I${className} extends Pick<BaseHttpDatasource, keyof BaseHttpDatasource> {
+	createRequest<${generic}>(callback: CreateRequestCallbackType<${rawType}>): Promise<${resultType}>;
+}
 
-	const targetPath = getFoundationConstructPath((await getSharedState()).sharedContext.name, 'datasource');
-	await fs.mkdir(targetPath, { recursive: true });
-
-	const filePath = path.join(targetPath, `${className}.ts`);
-	const created = await writeIfNotExists(filePath, content);
-	await updateIndexTs(targetPath);
-
-	if (!created) {
-		console.log(`⚠️ Datasource "${className}" already exists. File was not overwritten.`);
-		return;
+export class ${className} extends BaseHttpDatasource implements I${className} {
+	async createRequest<${generic}>(callback: CreateRequestCallbackType<${rawType}>): Promise<${resultType}> {
+		return ${response ? `new ${response}<TData, TMeta>(await this.createRawRequest<${rawType}>(callback))` : 'await this.createRawRequest<TData>(callback)'};
 	}
-
-	await registerDatasource(className);
-	console.log(`✅ Datasource created: ${filePath}`);
+}
+`
+	);
+	await updateIndexTs(root);
+	if (!created) return;
+	const { provider } = await prompts({
+		type: 'confirm',
+		name: 'provider',
+		message: 'Create HttpProvider for this datasource?',
+		initial: true
+	});
+	if (provider) await registerDatasource(className);
 }

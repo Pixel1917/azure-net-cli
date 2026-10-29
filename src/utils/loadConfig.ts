@@ -6,6 +6,7 @@ import ts from 'typescript';
 import { flattenConfigLiterals } from './flattenConfig.js';
 
 export type AzureNetConfig = {
+	appBoundaries?: string[];
 	presentationWorkspaces?: string[];
 	runChecksBeforePush?: boolean;
 	packageManager?: string;
@@ -46,12 +47,14 @@ export async function loadUserConfig(cwd = process.cwd()): Promise<AzureNetConfi
 		if (!config || typeof config !== 'object' || Array.isArray(config))
 			throw new Error('Expected a default-exported configuration object.');
 		const parsed = config as AzureNetConfig;
-		if (
-			parsed.presentationWorkspaces !== undefined &&
-			(!Array.isArray(parsed.presentationWorkspaces) ||
-				parsed.presentationWorkspaces.some((name) => typeof name !== 'string' || !/^[A-Za-z][A-Za-z0-9 _-]*$/.test(name.trim())))
-		)
-			throw new Error('presentationWorkspaces must be an array of valid workspace names.');
+		for (const key of ['appBoundaries', 'presentationWorkspaces'] as const) {
+			const names = parsed[key];
+			if (
+				names !== undefined &&
+				(!Array.isArray(names) || names.some((name) => typeof name !== 'string' || !/^[A-Z][A-Za-z0-9]*$/.test(name)))
+			)
+				throw new Error(`${key} must be an array of PascalCase boundary names.`);
+		}
 		if (parsed.runChecksBeforePush !== undefined && typeof parsed.runChecksBeforePush !== 'boolean')
 			throw new Error('runChecksBeforePush must be a boolean.');
 		return parsed;
@@ -72,7 +75,9 @@ export async function initializeConfigDefaults(cwd = process.cwd()): Promise<voi
 	if (config.runChecksBeforePush !== undefined) return;
 	const resolved = resolveConfigFile(cwd);
 	if (!resolved.exists) {
-		await fs.writeFile(resolved.filepath, 'export default {\n\trunChecksBeforePush: true\n};\n', { flag: 'wx' });
+		await fs.writeFile(resolved.filepath, "export default {\n\tappBoundaries: ['Public'],\n\trunChecksBeforePush: true\n};\n", {
+			flag: 'wx'
+		});
 		return;
 	}
 	const content = await fs.readFile(resolved.filepath, 'utf8');

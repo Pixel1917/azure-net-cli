@@ -7,6 +7,7 @@ import {
 	getRepositoryMeta,
 	getAvailableTsNames,
 	selectContext,
+	selectAggregate,
 	resolveRepositoriesPath,
 	resolveDomainRootPath,
 	resolveUseCasesPath,
@@ -30,7 +31,11 @@ export function addTypeImports(content: string, generated: string): string {
 		}
 	const additions: string[] = [];
 	for (const statement of parse(generated).statements)
-		if (ts.isImportDeclaration(statement) && statement.importClause?.isTypeOnly) {
+		if (
+			ts.isImportDeclaration(statement) &&
+			statement.importClause?.isTypeOnly &&
+			statement.moduleSpecifier.getText().slice(1, -1) !== 'unused'
+		) {
 			const bindings = statement.importClause.namedBindings;
 			if (!bindings || !ts.isNamedImports(bindings)) continue;
 			const names = bindings.elements.filter((item) => !existing.has(item.name.text)).map((item) => item.name.text);
@@ -45,7 +50,9 @@ export function addTypeImports(content: string, generated: string): string {
 export default async function generateRepositoryMethod(): Promise<void> {
 	const context = await selectContext();
 	if (!context) return;
-	const names = await getAvailableTsNames(resolveRepositoriesPath(context));
+	const aggregate = await selectAggregate(context);
+	if (!aggregate) return;
+	const names = await getAvailableTsNames(resolveRepositoriesPath(context, aggregate));
 	if (!names.length) throw new Error('No repositories found in this context.');
 	const answer = await prompts({
 		type: 'select',
@@ -55,11 +62,11 @@ export default async function generateRepositoryMethod(): Promise<void> {
 	});
 	if (!answer.repository) return;
 	const meta = getRepositoryMeta(answer.repository);
-	const repositoryFile = path.join(resolveRepositoriesPath(context), meta.className + '.ts');
-	const types = await getDomainTypes(context);
+	const repositoryFile = path.join(resolveRepositoriesPath(context, aggregate), meta.className + '.ts');
+	const types = await getDomainTypes(context, aggregate);
 	const contract = types.find((type) => type.name === meta.repositoryInterfaceName && type.layer === 'Ports');
 	if (!contract) throw new Error(`Interface ${meta.repositoryInterfaceName} was not found in Domain/Ports.`);
-	const interfaceFile = path.join(resolveDomainRootPath(context), 'Ports', contract.fileName + '.ts');
+	const interfaceFile = path.join(resolveDomainRootPath(context, aggregate), 'Ports', contract.fileName + '.ts');
 	const method = await promptMethodDefinition(types);
 	if (!method) return;
 	const repositoryContent = await fs.readFile(repositoryFile, 'utf8');
@@ -77,14 +84,14 @@ export default async function generateRepositoryMethod(): Promise<void> {
 	const generated = buildRepositoryContent({
 		meta,
 		contextAlias: `#contexts/${context}`,
-		domainName: context,
+		domainName: aggregate,
 		domainTypes: types,
 		datasource: { name: 'Datasource', importPath: 'unused' },
 		methods: [method]
 	});
 	const params = [
 		method.pathParamType ? `pathParam: ${method.pathParamType}` : '',
-		method.queryType ? `request: ${method.queryType.name}` : '',
+		method.queryType ? `${method.bodyType ? 'queryParams' : 'request'}: ${method.queryType.name}` : '',
 		method.bodyType ? `request: ${method.bodyType.name}` : ''
 	]
 		.filter(Boolean)
@@ -102,7 +109,7 @@ export default async function generateRepositoryMethod(): Promise<void> {
 		interfaceContent.slice(0, interfaceNode.end - 1) + signature + interfaceContent.slice(interfaceNode.end - 1),
 		generated
 	);
-	const useCasesFile = path.join(resolveUseCasesPath(context), meta.useCasesClassName + '.ts');
+	const useCasesFile = path.join(resolveUseCasesPath(context, aggregate), meta.useCasesClassName + '.ts');
 	let useCasesContent: string | undefined;
 	try {
 		useCasesContent = await fs.readFile(useCasesFile, 'utf8');
@@ -120,6 +127,25 @@ export default async function generateRepositoryMethod(): Promise<void> {
 				useCasesContent.slice(0, node.end - 1) +
 				`\n\tdeclare ${method.name}: ${meta.repositoryInterfaceName}['${method.name}'];\n` +
 				useCasesContent.slice(node.end - 1);
+	}
+
+	if (useCasesNext !== undefined) {
+		const source = parse(useCasesNext);
+		const contract = source.statements.find(
+			(node): node is ts.InterfaceDeclaration => ts.isInterfaceDeclaration(node) && node.name.text === 'I' + meta.useCasesClassName
+		);
+		if (contract && !contract.members.some((m) => m.name?.getText(source) === method.name)) {
+			useCasesNext =
+				useCasesNext.slice(0, contract.end - 1) +
+				'\n' +
+				method.name +
+				': ' +
+				meta.repositoryInterfaceName +
+				"['" +
+				method.name +
+				"'];\n" +
+				useCasesNext.slice(contract.end - 1);
+		}
 	}
 	await fs.writeFile(repositoryFile, repositoryNext);
 	await fs.writeFile(interfaceFile, interfaceNext);

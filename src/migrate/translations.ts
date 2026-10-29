@@ -203,5 +203,100 @@ export function migrateTranslationsSources(sources: Map<string, string>, resolve
 		if (edits.length) updates.set(file, patch(input, edits));
 	}
 	// Do not connect automatic loading while an old custom locale resolver is still active.
-	return { updates: unsafeLifecycle ? new Map<string, string>() : updates, issues };
+	if (unsafeLifecycle) return { updates: new Map<string, string>(), issues };
+	const facade = migrateManagerFacade(new Map([...sources, ...updates]), manager, resolve);
+	if (facade.issues.length) return { updates: new Map<string, string>(), issues: [...issues, ...facade.issues] };
+	return { updates: new Map([...updates, ...facade.updates]), issues };
+}
+
+function migrateManagerFacade(
+	sources: Map<string, string>,
+	manager: { file: string; name: string },
+	resolve: (from: string, specifier: string) => string | undefined
+) {
+	const updates = new Map<string, string>();
+	const issues: { file: string; reason: string }[] = [];
+	for (const [file, input] of sources) {
+		if (!/\.[jt]s$/.test(file)) {
+			if (input.includes(manager.name))
+				issues.push({ file, reason: 'Translation manager in a non-script source requires manual facade migration.' });
+			continue;
+		}
+		const source = ts.createSourceFile(file, input, ts.ScriptTarget.Latest, true);
+		const edits: Edit[] = [];
+		const names = new Set<string>(file === manager.file ? [manager.name] : []);
+		for (const statement of source.statements) {
+			if (
+				ts.isExportDeclaration(statement) &&
+				statement.moduleSpecifier &&
+				ts.isStringLiteral(statement.moduleSpecifier) &&
+				resolve(file, statement.moduleSpecifier.text) === manager.file
+			)
+				issues.push({ file, reason: 'Translation manager re-export requires manual facade migration.' });
+			if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+			const bindings = statement.importClause?.namedBindings;
+			if (resolve(file, statement.moduleSpecifier.text) === manager.file) {
+				if (bindings && ts.isNamedImports(bindings)) {
+					for (const binding of bindings.elements)
+						if ((binding.propertyName ?? binding.name).text === manager.name) names.add(binding.name.text);
+				} else issues.push({ file, reason: 'Namespace/default translation manager import requires manual facade migration.' });
+			}
+			if (file === manager.file && translationModules.has(statement.moduleSpecifier.text) && bindings && ts.isNamedImports(bindings)) {
+				for (const binding of bindings.elements) {
+					if ((binding.propertyName ?? binding.name).text !== 'createTranslations') continue;
+					edits.push({ start: binding.getStart(source), end: binding.end, text: `TranslationManager as ${binding.name.text}` });
+				}
+			}
+		}
+		const options: ts.CompilerOptions = { noLib: true, noResolve: true };
+		const host = ts.createCompilerHost(options);
+		host.getSourceFile = (name) => (name === file ? source : undefined);
+		host.fileExists = (name) => name === file;
+		host.readFile = (name) => (name === file ? input : undefined);
+		const checker = ts.createProgram([file], options, host).getTypeChecker();
+		const symbols = new Set<ts.Symbol>();
+		const declarations = (node: ts.Node): void => {
+			if (
+				(ts.isImportSpecifier(node) || ts.isVariableDeclaration(node)) &&
+				ts.isIdentifier(node.name) &&
+				names.has(node.name.text) &&
+				(ts.isImportSpecifier(node) || (file === manager.file && node.parent.parent.parent === source))
+			) {
+				const symbol = checker.getSymbolAtLocation(node.name);
+				if (symbol) symbols.add(symbol);
+			}
+			ts.forEachChild(node, declarations);
+		};
+		declarations(source);
+		const visit = (node: ts.Node): void => {
+			if (ts.isImportDeclaration(node)) return;
+			if (
+				file === manager.file &&
+				ts.isVariableDeclaration(node) &&
+				ts.isIdentifier(node.name) &&
+				node.name.text === manager.name &&
+				node.initializer &&
+				ts.isCallExpression(node.initializer)
+			)
+				edits.push({ start: node.initializer.getStart(source), end: node.initializer.getStart(source), text: 'new ' });
+			if (ts.isIdentifier(node) && symbols.has(checker.getSymbolAtLocation(node)!)) {
+				const parent = node.parent;
+				if (ts.isCallExpression(parent) && parent.expression === node && !parent.arguments.length)
+					edits.push({ start: parent.getStart(source), end: parent.end, text: node.text });
+				else if (
+					!(ts.isVariableDeclaration(parent) && parent.name === node) &&
+					!(
+						ts.isCallExpression(parent) &&
+						ts.isPropertyAccessExpression(parent.expression) &&
+						parent.expression.name.text === 'useTranslations'
+					)
+				)
+					issues.push({ file, reason: 'Translation manager escapes a direct accessor call; manual facade migration required.' });
+			}
+			ts.forEachChild(node, visit);
+		};
+		visit(source);
+		if (edits.length) updates.set(file, patch(input, edits));
+	}
+	return { updates, issues };
 }

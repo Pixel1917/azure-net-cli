@@ -36,7 +36,7 @@ const load = (file) => import(pathToFileURL(path.join(output, file)).href);
 const { default: commit, validateSubject, formatCommitMessage, CommitCancelledError } = await load('src/git/commit.js');
 const { default: push } = await load('src/git/push.js');
 const { runGit } = await load('src/git/runGit.js');
-const { default: addLint } = await load('src/plugins/addLint.js');
+const { default: prettierConfig } = await load('src/plugins/prettierConfig.js');
 const answers = { type: 'feat', subject: 'support git commands' };
 const prompt = async () => answers;
 
@@ -231,7 +231,7 @@ test('commit-tools replaces configs, backs up originals uniquely, and installs n
 		fs.writeFileSync('azure-net.config.ts', 'export default { packageManager: "bun" };');
 		fs.mkdirSync('.husky');
 		fs.writeFileSync('.husky/pre-commit', 'custom hook');
-		await addLint();
+		await prettierConfig();
 		assert.deepEqual(fs.readdirSync('.').sort(), ['.husky', '.prettierrc', 'azure-net.config.ts', 'package.json']);
 		const expected = fs.readFileSync('.prettierrc', 'utf8');
 		assert.equal(JSON.parse(expected).plugins, undefined);
@@ -240,7 +240,7 @@ test('commit-tools replaces configs, backs up originals uniquely, and installs n
 		for (let i = 0; i < 8; i++) {
 			const previous = `custom config ${i}`;
 			fs.writeFileSync('.prettierrc', previous);
-			await addLint();
+			await prettierConfig();
 			const dirs = fs.readdirSync(backupRoot);
 			assert.equal(dirs.length, i + 1);
 			const fresh = dirs.filter((name) => !seen.has(name));
@@ -252,7 +252,7 @@ test('commit-tools replaces configs, backs up originals uniquely, and installs n
 		fs.writeFileSync('prettier.config.mjs', 'export default { semi: false };');
 		const pkgWithPrettier = JSON.stringify({ ...JSON.parse(pkg), prettier: { semi: false } });
 		fs.writeFileSync('package.json', pkgWithPrettier);
-		await addLint();
+		await prettierConfig();
 		const fresh = fs.readdirSync(backupRoot).filter((name) => !seen.has(name));
 		assert.equal(fresh.length, 1);
 		const backup = path.join(backupRoot, fresh[0]);
@@ -278,7 +278,7 @@ test('commit-tools fails without package.json without creating anything', async 
 	const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'azure-net-missing-package-'));
 	try {
 		process.chdir(temp);
-		await assert.rejects(addLint(), /package.json not found/);
+		await assert.rejects(prettierConfig(), /package.json not found/);
 		assert.deepEqual(fs.readdirSync('.'), []);
 	} finally {
 		process.chdir(cwd);

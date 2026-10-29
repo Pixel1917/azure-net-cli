@@ -25,7 +25,7 @@ const resolveAliasMap = async () => {
     const map = new Map([
         ['#contexts', path.join(process.cwd(), 'src/app/Contexts')],
         ['#presentation', path.join(process.cwd(), 'src/app/Presentation')],
-        ['#platform', path.join(process.cwd(), 'src/app/Platform')]
+        ['#platform', path.join(process.cwd(), 'src/platform')]
     ]);
     return map;
 };

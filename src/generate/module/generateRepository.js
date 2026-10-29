@@ -1,8 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import prompts from 'prompts';
-import { buildRepositoryContent, createUseCasesForRepository, ensureRepositoryName, getConfigState, getDomainTypes, getRepositoryMeta, promptMethodsBatch, resolveContextAlias, resolveRepositoriesPath, selectContext, selectDatasource, writeRepositoryInterface } from './repositoryModuleShared.js';
-import { updateIndexTs, writeIfNotExists } from '../../utils/fileUtils.js';
+import { buildRepositoryContent, createUseCasesForRepository, ensureRepositoryName, getConfigState, getDomainTypes, getRepositoryMeta, promptMethodsBatch, resolveContextAlias, resolveRepositoriesPath, selectContext, selectAggregate, selectDatasource, writeRepositoryInterface } from './repositoryModuleShared.js';
+import { writeIfNotExists } from '../../utils/fileUtils.js';
 export default async function generateRepository(options = {}) {
     let contextName = options.contextName ? String(options.contextName) : null;
     if (!contextName) {
@@ -12,7 +12,9 @@ export default async function generateRepository(options = {}) {
         process.exitCode = 1;
         return null;
     }
-    const domainName = contextName;
+    const domainName = options.domainName ?? (await selectAggregate(contextName));
+    if (!domainName)
+        return null;
     const { repositoryNameRaw } = await prompts({
         type: 'text',
         name: 'repositoryNameRaw',
@@ -47,7 +49,7 @@ export default async function generateRepository(options = {}) {
     }
     const { contexts } = await getConfigState();
     const contextAlias = resolveContextAlias(contexts, contextName);
-    const repositoriesPath = resolveRepositoriesPath(contextName);
+    const repositoriesPath = resolveRepositoriesPath(contextName, domainName);
     await fs.mkdir(repositoriesPath, { recursive: true });
     const repositoryPath = path.join(repositoriesPath, `${meta.className}.ts`);
     const interfaceCreated = await writeRepositoryInterface({
@@ -67,7 +69,6 @@ export default async function generateRepository(options = {}) {
         methods
     });
     const created = await writeIfNotExists(repositoryPath, repositoryContent);
-    await updateIndexTs(repositoriesPath);
     if (!created) {
         console.warn(`⚠️ Repository "${meta.className}" already exists. File was not overwritten.`);
         process.exitCode = 1;

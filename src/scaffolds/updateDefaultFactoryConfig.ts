@@ -1,7 +1,11 @@
 import ts from 'typescript';
 import { flattenConfigLiterals } from '../utils/flattenConfig.js';
 
-export function updateDefaultFactoryConfig(content: string, key: 'defaultSchemaFactory', name: string): string {
+export function updateDefaultFactoryConfig(
+	content: string,
+	key: 'defaultSchemaFactory' | 'runChecksBeforePush' | 'packageManager',
+	name: string | boolean
+): string {
 	content = flattenConfigLiterals(content);
 	if (!content.trim()) return `export default {\n\t${key}: ${JSON.stringify(name)}\n};\n`;
 	const source = ts.createSourceFile('azure-net.config.ts', content, ts.ScriptTarget.Latest, true);

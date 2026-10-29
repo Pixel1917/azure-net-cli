@@ -1,8 +1,7 @@
-import prompts from 'prompts';
+import { prepareComposition } from './composition.js';
 import generateDomain from './generateDomain.js';
 import generateRepository from './generateRepository.js';
 import generatePresenter from './generatePresenter.js';
-import { printApplicationProviderWiring } from './repositoryModuleShared.js';
 export default async function generateModule() {
     const domainResult = await generateDomain();
     if (!domainResult) {
@@ -22,19 +21,16 @@ export default async function generateModule() {
         process.exitCode = 1;
         return;
     }
-    printApplicationProviderWiring(repositoryResult.contextName, repositoryResult.repositoryName, repositoryResult.datasourceName);
-    const { isReadyForPresenter } = await prompts({
-        type: 'confirm',
-        name: 'isReadyForPresenter',
-        message: 'Did you register repository/use-cases in the central ApplicationProvider and want to continue?',
-        initial: false
-    });
-    if (!isReadyForPresenter) {
-        console.log('ℹ️ Module flow paused. Complete provider wiring and rerun `azure-net generate presenter`.');
+    if (!(await prepareComposition({
+        context: repositoryResult.contextName,
+        aggregate: repositoryResult.domainName,
+        repository: repositoryResult.repositoryName,
+        datasource: repositoryResult.datasourceName
+    })))
         return;
-    }
     await generatePresenter({
         contextName: repositoryResult.contextName,
+        aggregateName: repositoryResult.domainName,
         useCasesName: repositoryResult.useCasesName
     });
 }

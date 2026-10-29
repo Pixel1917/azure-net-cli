@@ -2,14 +2,14 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import prompts from 'prompts';
 import ts from 'typescript';
-import { selectWorkspace, selectScope } from '../../utils/architecture.js';
+import { selectWorkspace, selectScope, selectAggregate, getAggregatePath, getContextPath } from '../../utils/architecture.js';
 import { toPascalCase } from '../../utils/contextUtils.js';
 import { writeIfNotExists, updateIndexTs } from '../../utils/fileUtils.js';
 import { getConfigState, resolveContextAlias, selectContext } from './repositoryModuleShared.js';
 import { loadUserConfig } from '../../utils/loadConfig.js';
 import { getFoundationConstructImportPath, getFoundationConstructPath, getSharedState } from '../../utils/sharedFoundation.js';
 export const parseProviderInfo = (content) => {
-    const source = ts.createSourceFile('ApplicationProvider.ts', content, ts.ScriptTarget.Latest, true);
+    const source = ts.createSourceFile('Composition.ts', content, ts.ScriptTarget.Latest, true);
     const services = new Map();
     const aliases = new Map();
     for (const statement of source.statements) {
@@ -59,7 +59,7 @@ export const parseProviderInfo = (content) => {
         ts.forEachChild(node, visit);
     };
     visit(source);
-    return { providerName: 'ApplicationProvider', services };
+    return { providerName: 'Composition', services };
 };
 export const parseUseCasesInfo = (content) => {
     const source = ts.createSourceFile('UseCases.ts', content, ts.ScriptTarget.Latest, true);
@@ -123,8 +123,8 @@ export const parseRepositoryInterfaceMethods = (content, interfaceName) => {
     }
     return methods;
 };
-const findRepositoryByInterface = async (contextName, repositoryInterfaceName) => {
-    const repositoriesPath = path.join(process.cwd(), 'src', 'app', 'Contexts', contextName, 'Infrastructure', 'Repositories');
+const findRepositoryByInterface = async (contextName, aggregateName, repositoryInterfaceName) => {
+    const repositoriesPath = path.join(getAggregatePath(contextName, aggregateName), 'Infrastructure', 'Repositories');
     try {
         const files = await fs.readdir(repositoriesPath);
         for (const fileName of files) {
@@ -197,7 +197,7 @@ const toTypeFileName = (typeName) => String(typeName ?? '').replace(/^I/, '') ||
 const buildMethodInvocation = (method, useCasesName, schemaByMethod) => {
     const paramsSignature = method.params.map((item) => `${item.name}: ${item.type}`).join(', ');
     const argNames = method.params.map((item) => item.name.replace(/\?$/, ''));
-    const requestParam = method.params.find((item) => !isPathParamName(item.name));
+    const requestParam = method.params.find((item) => item.name.replace(/\?$/, '') === 'request') ?? method.params.find((item) => !isPathParamName(item.name));
     const schemaInfo = schemaByMethod.get(method.name) ?? null;
     const args = argNames.map((argName) => {
         if (schemaInfo && requestParam && argName === requestParam.name.replace(/\?$/, '')) {
@@ -207,18 +207,12 @@ const buildMethodInvocation = (method, useCasesName, schemaByMethod) => {
     });
     const httpMethod = method.httpMethod;
     if (httpMethod === 'get' || httpMethod === 'head' || httpMethod === 'options') {
-        return `\t${method.name} = (${paramsSignature}) => createAsyncResource(() => ${useCasesName}.${method.name}(${args.join(', ')}));`;
+        return `\t${method.name}(${paramsSignature}) { return createAsyncResource(() => ${useCasesName}.${method.name}(${args.join(', ')})); }`;
     }
-    const responseType = method.responseType;
-    const requestType = requestParam?.type ?? null;
-    let generic = `<${responseType}`;
-    if (requestType)
-        generic += `, ${requestType}`;
-    generic += '>';
-    return `\t${method.name} = (${paramsSignature}) => createAsyncAction${generic}(() => ${useCasesName}.${method.name}(${args.join(', ')}));`;
+    return `\t${method.name}(${paramsSignature}) { return createAsyncAction(() => ${useCasesName}.${method.name}(${args.join(', ')})); }`;
 };
-const getApplicationProviderFile = async () => {
-    const targetPath = path.join(process.cwd(), 'src/app/Platform/Foundation/DI/ApplicationProvider.ts');
+const getCompositionFile = async (context) => {
+    const targetPath = path.join(getContextPath(context), 'Composition.ts');
     try {
         await fs.access(targetPath);
         return targetPath;
@@ -227,8 +221,8 @@ const getApplicationProviderFile = async () => {
         return null;
     }
 };
-const resolveDomainInterfaceFile = async ({ contextName, interfaceName }) => {
-    const portsPath = path.join(process.cwd(), 'src', 'app', 'Contexts', contextName, 'Domain', 'Ports');
+const resolveDomainInterfaceFile = async ({ contextName, domainName, interfaceName }) => {
+    const portsPath = path.join(getAggregatePath(contextName, domainName), 'Domain', 'Ports');
     const preferredPath = path.join(portsPath, `${toTypeFileName(interfaceName)}.ts`);
     const legacyPath = path.join(portsPath, `${interfaceName}.ts`);
     for (const candidate of [preferredPath, legacyPath]) {
@@ -267,15 +261,18 @@ export default async function generatePresenter(options = {}) {
         process.exitCode = 1;
         return;
     }
-    const appProviderFile = await getApplicationProviderFile();
+    const aggregateName = options.aggregateName ?? (await selectAggregate(contextName));
+    if (!aggregateName)
+        return;
+    const appProviderFile = await getCompositionFile(contextName);
     if (!appProviderFile) {
-        console.error('❌ ApplicationProvider file was not found.');
+        console.error('❌ Composition file was not found.');
         process.exitCode = 1;
         return;
     }
     const appProviderContent = await fs.readFile(appProviderFile, 'utf-8');
     const providerInfo = parseProviderInfo(appProviderContent);
-    const useCasesPath = path.join(process.cwd(), 'src', 'app', 'Contexts', contextName, 'Application', 'UseCases');
+    const useCasesPath = path.join(getAggregatePath(contextName, aggregateName), 'Application', 'UseCases');
     let useCasesFiles = [];
     try {
         useCasesFiles = (await fs.readdir(useCasesPath))
@@ -287,7 +284,7 @@ export default async function generatePresenter(options = {}) {
     }
     const registeredUseCases = useCasesFiles.filter((item) => [...providerInfo.services.values()].includes(item));
     if (!registeredUseCases.length) {
-        console.error('❌ No registered UseCases were found in ApplicationProvider register().');
+        console.error('❌ No registered UseCases were found in Composition register().');
         process.exitCode = 1;
         return;
     }
@@ -303,7 +300,7 @@ export default async function generatePresenter(options = {}) {
         useCasesName = String(selectedUseCases ?? '');
     }
     if (!registeredUseCases.includes(useCasesName)) {
-        console.error(`❌ UseCases "${useCasesName}" is not registered in ApplicationProvider.`);
+        console.error(`❌ UseCases "${useCasesName}" is not registered in Composition.`);
         process.exitCode = 1;
         return;
     }
@@ -328,7 +325,7 @@ export default async function generatePresenter(options = {}) {
         process.exitCode = 1;
         return;
     }
-    const repositoryInfo = await findRepositoryByInterface(contextName, useCasesInfo.repositoryInterfaceName);
+    const repositoryInfo = await findRepositoryByInterface(contextName, aggregateName, useCasesInfo.repositoryInterfaceName);
     if (!repositoryInfo) {
         console.error(`❌ Repository implementing ${useCasesInfo.repositoryInterfaceName} was not found.`);
         process.exitCode = 1;
@@ -337,7 +334,7 @@ export default async function generatePresenter(options = {}) {
     const repositoryHttpMethods = parseRepositoryHttpMethods(repositoryInfo.content);
     const domainPortsInterfacePath = await resolveDomainInterfaceFile({
         contextName,
-        domainName: useCasesInfo.domainName,
+        domainName: aggregateName,
         interfaceName: useCasesInfo.repositoryInterfaceName
     });
     if (!domainPortsInterfacePath) {
@@ -347,16 +344,23 @@ export default async function generatePresenter(options = {}) {
     }
     const repositoryInterfaceContent = await fs.readFile(domainPortsInterfacePath, 'utf-8');
     const repositoryMethods = parseRepositoryInterfaceMethods(repositoryInterfaceContent, useCasesInfo.repositoryInterfaceName).filter((method) => useCasesInfo.methods.includes(method.name));
-    const { presenterNameRaw } = await prompts({
-        type: 'text',
-        name: 'presenterNameRaw',
-        message: 'Presenter name (optional):'
-    });
+    const { presenterNameRaw } = options.presenterName
+        ? { presenterNameRaw: options.presenterName }
+        : await prompts({
+            type: 'text',
+            name: 'presenterNameRaw',
+            message: 'Presenter name (optional):'
+        });
     const presenterName = normalizePresenterName(presenterNameRaw, useCasesName);
-    const workspace = await selectWorkspace();
+    const workspace = options.workspace ?? (await selectWorkspace());
     if (!workspace)
         return;
-    const scope = await selectScope(workspace);
+    const scope = options.scope ??
+        (await selectScope({
+            ...workspace,
+            name: workspace.name ?? '',
+            alias: '#presentation' + (workspace.name ? '/' + workspace.name : '')
+        }));
     if (!scope)
         return;
     const presentationPath = path.join(workspace.path, 'Scopes', scope);
@@ -370,7 +374,7 @@ export default async function generatePresenter(options = {}) {
     }
     await fs.mkdir(presentationPath, { recursive: true });
     const { contexts, sharedAlias } = await getConfigState();
-    const contextAlias = resolveContextAlias(contexts, contextName);
+    const contextAlias = resolveContextAlias(contexts, contextName) + '/' + aggregateName;
     const schemaFactoryImportPath = getFoundationConstructImportPath(sharedAlias, 'schema');
     const mutationMethods = repositoryMethods.filter((method) => {
         const httpMethod = repositoryHttpMethods.get(method.name) ?? 'get';
@@ -383,15 +387,18 @@ export default async function generatePresenter(options = {}) {
     let schemaIndexNeeded = false;
     if (mutationMethods.length) {
         for (const method of mutationMethods) {
-            const requestParam = method.params.find((item) => !isPathParamName(item.name));
+            const requestParam = method.params.find((item) => item.name.replace(/\?$/, '') === 'request') ??
+                method.params.find((item) => !isPathParamName(item.name));
             if (!requestParam)
                 continue;
-            const { shouldCreateSchema } = await prompts({
-                type: 'confirm',
-                name: 'shouldCreateSchema',
-                message: `Create schema for "${method.name}"?`,
-                initial: false
-            });
+            const { shouldCreateSchema } = options.schemas !== undefined
+                ? { shouldCreateSchema: options.schemas }
+                : await prompts({
+                    type: 'confirm',
+                    name: 'shouldCreateSchema',
+                    message: `Create schema for "${method.name}"?`,
+                    initial: false
+                });
             if (!shouldCreateSchema)
                 continue;
             if (!schemaFactoryResolved) {
@@ -451,24 +458,36 @@ export const ${schemaConstName} = ${schemaFactory}<${requestParam.type}>()
         .join('\n\n');
     const schemaImportLine = schemaImports.length ? `import { ${Array.from(new Set(schemaImports)).join(', ')} } from './Schema';` : '';
     const typeImportLine = typeImports.length ? `import type { ${typeImports.join(', ')} } from '${contextAlias}/Domain';` : '';
-    const presenterContent = `import { RegisterProvider${helperParams ? ', ' + helperParams : ''} } from '@azure-net/kit/delivery';
-import { ApplicationProvider } from '#platform/Foundation/DI';
+    const presenterContent = `${helperParams ? 'import { ' + helperParams + " } from '@azure-net/kit/delivery';" : ''}
 ${schemaImportLine}
-import type { ${useCasesName} } from '${contextAlias}/Application/UseCases/${useCasesName}';
+import type { I${useCasesName} } from '${contextAlias}/Application/UseCases/${useCasesName}';
 ${typeImportLine}
 
 export class ${presenterName} {
-\tconstructor(private readonly useCases: ${useCasesName}) {}
-
+ constructor(private readonly useCases: I${useCasesName}) {}
 ${methodsCode}
 }
-
-export const use${presenterName} = RegisterProvider(() => {
-\tconst { ${serviceName} } = ApplicationProvider();
-\treturn new ${presenterName}(${serviceName});
-}, 'scoped');
 `;
-    await writeIfNotExists(path.join(presentationPath, `${presenterName}.ts`), presenterContent);
-    await updateIndexTs(presentationPath);
+    await writeIfNotExists(path.join(presentationPath, presenterName + '.ts'), presenterContent);
+    const indexFile = path.join(presentationPath, 'index.ts');
+    let index = '';
+    try {
+        index = await fs.readFile(indexFile, 'utf8');
+    }
+    catch (error) {
+        if (error.code !== 'ENOENT')
+            throw error;
+    }
+    const factory = 'use' + presenterName;
+    if (new RegExp('\\b' + factory + '\\b').test(index))
+        throw new Error('Presenter binding already exists: ' + factory);
+    // Alias imports per binding so several aggregates can share a scope safely.
+    const alias = presenterName + 'Context';
+    index += `\nimport { RegisterProvider as Register${presenterName} } from '@azure-net/kit/delivery';
+import { ${contextName}Context as ${alias} } from '#contexts/${contextName}/Composition';
+import { ${presenterName} } from './${presenterName}';
+export const ${factory} = Register${presenterName}(() => new ${presenterName}(${alias}.resolve().${serviceName}));
+`;
+    await fs.writeFile(indexFile, index);
     console.log(`✅ Presenter generated: ${path.join(presentationPath, `${presenterName}.ts`)}`);
 }

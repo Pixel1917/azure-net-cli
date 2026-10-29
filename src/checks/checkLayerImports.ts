@@ -5,8 +5,8 @@ export default async function checkLayerImports(): Promise<void> {
 		if (source[0] !== 'Contexts') return null;
 		if (target[0] === 'Presentation') return 'Contexts cannot import Presentation';
 		if (target[0] !== 'Contexts') return null;
-		const from = source[2];
-		const to = target[2];
+		const from = source[source[1] === 'SharedKernel' ? 2 : 3];
+		const to = target[target[1] === 'SharedKernel' ? 2 : 3];
 		if ((from === 'Domain' && (to === 'Application' || to === 'Infrastructure')) || (from === 'Infrastructure' && to === 'Application'))
 			return `${from} cannot import ${to}`;
 		return null;

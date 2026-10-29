@@ -1,12 +1,15 @@
 import prompts from 'prompts';
-import { createUseCasesForRepository, getAvailableTsNames, getConfigState, resolveContextAlias, resolveDomainForRepository, resolveRepositoriesPath, selectContext } from './repositoryModuleShared.js';
+import { createUseCasesForRepository, getAvailableTsNames, getConfigState, resolveContextAlias, resolveDomainForRepository, resolveRepositoriesPath, selectContext, selectAggregate } from './repositoryModuleShared.js';
 export default async function generateUseCases() {
     const contextName = await selectContext('Select context for UseCases:');
     if (!contextName) {
         process.exitCode = 1;
         return;
     }
-    const repositoriesPath = resolveRepositoriesPath(contextName);
+    const aggregateName = await selectAggregate(contextName);
+    if (!aggregateName)
+        return;
+    const repositoriesPath = resolveRepositoriesPath(contextName, aggregateName);
     const repositories = await getAvailableTsNames(repositoriesPath);
     if (!repositories.length) {
         console.error(`❌ No repositories found in ${repositoriesPath}`);
@@ -29,6 +32,7 @@ export default async function generateUseCases() {
     const domainName = await resolveDomainForRepository({
         contextName,
         contextAlias,
+        aggregateName,
         repositoryName: String(repositoryName)
     });
     if (!domainName) {

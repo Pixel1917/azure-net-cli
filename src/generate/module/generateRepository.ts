@@ -12,10 +12,11 @@ import {
 	resolveContextAlias,
 	resolveRepositoriesPath,
 	selectContext,
+	selectAggregate,
 	selectDatasource,
 	writeRepositoryInterface
 } from './repositoryModuleShared.js';
-import { updateIndexTs, writeIfNotExists } from '../../utils/fileUtils.js';
+import { writeIfNotExists } from '../../utils/fileUtils.js';
 
 type GenerateRepositoryOptions = {
 	contextName?: string;
@@ -42,7 +43,8 @@ export default async function generateRepository(options: GenerateRepositoryOpti
 		return null;
 	}
 
-	const domainName = contextName;
+	const domainName = options.domainName ?? (await selectAggregate(contextName));
+	if (!domainName) return null;
 
 	const { repositoryNameRaw } = await prompts({
 		type: 'text',
@@ -84,7 +86,7 @@ export default async function generateRepository(options: GenerateRepositoryOpti
 
 	const { contexts } = await getConfigState();
 	const contextAlias = resolveContextAlias(contexts, contextName);
-	const repositoriesPath = resolveRepositoriesPath(contextName);
+	const repositoriesPath = resolveRepositoriesPath(contextName, domainName);
 	await fs.mkdir(repositoriesPath, { recursive: true });
 	const repositoryPath = path.join(repositoriesPath, `${meta.className}.ts`);
 
@@ -106,7 +108,6 @@ export default async function generateRepository(options: GenerateRepositoryOpti
 	});
 
 	const created = await writeIfNotExists(repositoryPath, repositoryContent);
-	await updateIndexTs(repositoriesPath);
 
 	if (!created) {
 		console.warn(`⚠️ Repository "${meta.className}" already exists. File was not overwritten.`);

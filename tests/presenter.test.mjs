@@ -59,7 +59,7 @@ test('provider parser understands block register, service names and import alias
 	assert.deepEqual(normalizeTypeImports(['never', 'IOrder[]', 'Partial<IOrder>', 'Record<string, TOrder>']), ['IOrder', 'TOrder']);
 });
 
-test('presenter uses central DI key, workspace scope, type imports and native helpers', async () => {
+test('presenter class uses usecase interface; scope index binds the context', async () => {
 	const previous = process.cwd();
 	const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'cli-presenter-'));
 	const oldExit = process.exitCode;
@@ -69,24 +69,25 @@ test('presenter uses central DI key, workspace scope, type imports and native he
 		await fs.writeFile(file, content);
 	};
 	try {
-		await write('src/app/Platform/Foundation/DI/ApplicationProvider.ts', provider);
-		await write('src/app/Contexts/Orders/Application/UseCases/OrdersUseCases.ts', useCases);
-		await write('src/app/Contexts/Orders/Infrastructure/Repositories/OrdersRepository.ts', repository);
-		await write('src/app/Contexts/Orders/Domain/Ports/OrdersRepository.ts', repoInterface);
+		await write('src/app/Contexts/Orders/Composition.ts', provider);
+		await write('src/app/Contexts/Orders/Order/Application/UseCases/OrdersUseCases.ts', useCases);
+		await write('src/app/Contexts/Orders/Order/Infrastructure/Repositories/OrdersRepository.ts', repository);
+		await write('src/app/Contexts/Orders/Order/Domain/Ports/OrdersRepository.ts', repoInterface);
 		await fs.mkdir('src/app/Presentation/Admin/Scopes', { recursive: true });
 		prompts.inject(['', 'Admin', '__create__', 'order-checkout', false]);
-		await generatePresenter({ contextName: 'Orders', useCasesName: 'OrdersUseCases' });
+		await generatePresenter({ contextName: 'Orders', aggregateName: 'Order', useCasesName: 'OrdersUseCases' });
 		assert.equal(process.exitCode, oldExit);
 		const generated = await fs.readFile('src/app/Presentation/Admin/Scopes/OrderCheckout/OrdersPresenter.ts', 'utf8');
-		assert.match(generated, /const \{ Orders \} = ApplicationProvider\(\)/);
+		const index = await fs.readFile('src/app/Presentation/Admin/Scopes/OrderCheckout/index.ts', 'utf8');
+		assert.match(index, /resolve\(\)\.Orders/);
 		assert.match(generated, /export class OrdersPresenter/);
-		assert.match(generated, /export const useOrdersPresenter = RegisterProvider/);
-		assert.match(generated, /constructor\(private readonly useCases: OrdersUseCases\)/);
+		assert.match(index, /export const useOrdersPresenter = RegisterOrdersPresenter/);
+		assert.match(generated, /constructor\(private readonly useCases: IOrdersUseCases\)/);
 		assert.doesNotMatch(generated, /createAsyncHelpers|AppPresenter|createPresenterFactory/);
 		assert.match(generated, /this\.useCases\.update\(pathParam, request\)/);
 		assert.match(generated, /import type \{ IOrder \}/);
 		assert.doesNotMatch(generated, /import type[^\n]*(never|Partial|\[\])/);
-		assert.match(generated, /createAsyncAction<never>/);
+		assert.match(generated, /createAsyncAction\(\(\) => this.useCases.destroy/);
 		assert.equal(
 			ts.transpileModule(generated, { reportDiagnostics: true, compilerOptions: { target: ts.ScriptTarget.ESNext } }).diagnostics.length,
 			0
@@ -94,6 +95,30 @@ test('presenter uses central DI key, workspace scope, type imports and native he
 	} finally {
 		process.chdir(previous);
 		process.exitCode = oldExit;
+		await fs.rm(dir, { recursive: true, force: true });
+	}
+});
+
+test('store generation puts class and request-safe singleton binding in scope Stores, without overwriting', async () => {
+	const cwd = process.cwd(),
+		dir = await fs.mkdtemp(path.join(os.tmpdir(), 'cli-store-'));
+	process.chdir(dir);
+	try {
+		await fs.mkdir('src/app/Presentation/Public/Scopes', { recursive: true });
+		const { default: generateStore } = await import('../src/generate/module/generateStore.js');
+		prompts.inject(['Public', '__create__', 'Identity', 'AccountStore']);
+		await generateStore();
+		const store = 'src/app/Presentation/Public/Scopes/Identity/Stores/AccountStore.svelte.ts';
+		const index = 'src/app/Presentation/Public/Scopes/Identity/Stores/index.ts';
+		assert.match(await fs.readFile(store, 'utf8'), /value = \$state<string \| null>/);
+		const before = await fs.readFile(index, 'utf8');
+		assert.match(before, /lifecycle: 'singleton'/);
+		assert.doesNotMatch(await fs.readFile(store, 'utf8'), /RegisterProvider/);
+		prompts.inject(['Public', 'Identity', 'AccountStore']);
+		await generateStore();
+		assert.equal(await fs.readFile(index, 'utf8'), before);
+	} finally {
+		process.chdir(cwd);
 		await fs.rm(dir, { recursive: true, force: true });
 	}
 });

@@ -1,201 +1,191 @@
 # @azure-net/cli
 
-CLI installs separately: `npm i -D @azure-net/cli`. Requires Node >=22.15 and @azure-net/kit >=6.0.0-next.1.
+Architecture scaffolding and checks for SvelteKit applications using `@azure-net/kit`.
+Install the CLI as a dev dependency. Node >=22.15 is required. Generation does not install Husky, commitlint, commitizen or other tools.
 
-## Architecture (breaking change)
+## Architecture
 
 ```text
-src/app/
-  Contexts/
-    SharedKernel/
-    Orders/
-      Domain/{Entities,Ports,Enums}
-      Infrastructure/Repositories
-      Application/UseCases
-  Presentation/
-    Admin/{Ui,Scopes,Shell}
-    Public/{Ui,Scopes,Shell}
-    Shared/{Ui,Scopes,Shell}
-  Platform/
-    Foundation/{Datasource,Response,Schema,DI}
-    Bootstrap/{Routes,Localization}
+src/
+  program.ts
+  app/
+    Contexts/
+      SharedKernel/{Contracts,Domain}
+      Identity/
+        Composition.ts
+        Account/
+          Domain/{Resources,DTO,Ports,Enums}
+          Application/UseCases/AccountUseCases.ts
+          Infrastructure/Repositories/AccountRepository.ts
+    Presentation/
+      Public/
+        Scopes/Identity/{AccountPresenter.ts,index.ts}
+        Shell/
+        Ui/
+          Actions/
+          Style/
+          Components/{Core,Page,Scopes,Composite}
+      Shared/{Scopes,Shell,Ui}
+  platform/
+    Bootstrap/Bootstrap.ts
+    Foundation/{Cookie,Datasource,Response,Schema,Provider}
 ```
 
-Each context, including SharedKernel, has the three context layers. Without configured workspaces, Presentation contains Ui, Scopes and Shell directly. Ui components go into Components/Shared, Components/Layout or Components/Page/PageName; widgets into Widgets and design components into Design. Presenters go into Scopes/ScopeName.
-
-Application directories/files use PascalCase; barrel index.ts is the exception. Framework files outside app retain their native names, including src/program.ts. Aliases are `#contexts`, `#presentation`, `#platform`.
-
-Contexts cannot import other contexts, except SharedKernel. SharedKernel cannot import other contexts. Presentation can import contexts. Workspaces cannot import each other except Shared; Shared cannot import other workspaces. These are static architectural checks, not a security sandbox: computed imports and indirect re-export graphs are not exhaustively resolved.
-
-Old contexts/sharedAlias/coreAlias configuration no longer determines generation paths. Existing projects are NOT migrated or deleted automatically. Move old code and imports deliberately before running the new checks.
-
-## Configuration
+Fresh structure creates only SharedKernel in Contexts. Aggregates and scopes are created on demand. No empty aggregate, root barrel or ApplicationProvider is generated. Domain barrels expose contracts; presentation scope barrels register class presenters/stores. Components get their own local barrel. Platform is a **sibling** of app, not a child.
 
 ```ts
 export default {
-	presentationWorkspaces: ['Admin', 'Public'],
+	appBoundaries: ['Public', 'Admin'],
+	runChecksBeforePush: true,
 	packageManager: 'pnpm',
-	runChecksBeforePush: true
+	defaultSchemaFactory: 'Schema'
 };
 ```
 
-Workspaces configure initial structure only; subsequent selections discover directories on disk. Context selectors offer existing contexts or creation of a new one. SharedKernel and, for grouped presentation, Shared are initialized automatically. The default schema factory can be selected through defaultSchemaFactory. Presenters are classes registered with RegisterProvider; no presenter factory is generated.
+`presentationWorkspaces` is accepted as a fallback for existing configuration. `appBoundaries` takes precedence. Shared is always included. Existing directories are discovered from disk; configuration supplies initial/additional boundaries. Contexts are not listed in configuration.
 
-### Presenter Generation
+Imports use package.json subpath imports: `#contexts/*`, `#presentation/*`, `#platform/*`. Custom mappings are not silently overwritten. Existing mappings to the previous architecture must be migrated first.
 
-`generate presenter`, `generate module` and `generate module-preset` generate a
-class accepting the selected UseCases in its constructor. Only the async helpers
-needed by its methods are imported directly from `@azure-net/kit/delivery`.
-Schema generation and provider service-key selection remain unchanged.
+## Installation and maintenance
 
-Each file exports both `OrdersPresenter` and `useOrdersPresenter`. The accessor
-is registered with `RegisterProvider(() => new OrdersPresenter(...), 'scoped')`;
-dependencies are resolved through `ApplicationProvider()` inside that callback.
-Call the accessor in the component. Generated arrow methods support destructuring.
-There is no `create presenter-factory` command or fresh-install presenter-factory step.
+- `azure-net install fresh`: creates structure, configures AzureNetPlugin, creates Bootstrap.ts and program.ts; offers optional Foundation artifacts, translations, error handler, Prettier configuration and Git hooks. No middleware is created by default.
+- `azure-net folders-update`: adds missing directories, including boundaries newly added to config. Preserves existing files and boundaries.
+- `azure-net prettier-config`: replaces the recommended Prettier configuration without installing packages.
+- `azure-net git-hooks add`: adds `azure-net check project` to the pre-commit workflow, preserving unrelated hook code. Disables the redundant pre-push check in configuration.
+- `azure-net git-hooks remove`: removes the CLI-owned hook block without deleting unrelated hooks.
+- `azure-net commit`: interactive staged commit, with optional body and breaking-change information.
+- `azure-net push [--no-check]`: optional checks, git add, interactive commit, git push. Checks default to enabled unless disabled in configuration.
 
-`migrate --dry-run` also previews this API upgrade for projects already using the
-Contexts/Presentation/Platform layout. Recognized callback presenters become
-classes plus accessors. The migrator preserves lexical state through a private
-state object and rewrites named consumer imports/re-exports to the accessor,
-retaining their local aliases. Async-helper factories are replaced by direct
-function references, preserving explicit custom error types. Unsupported custom
-unresolved injections and dynamic consumer imports are listed in the migration report for
-manual review. Original files remain in the migration snapshot.
+The old `add`, `init`, and `create` commands are removed. Use `prettier-config`, `folders-update`, `install fresh`, `foundation`, and `bootstrap` instead.
 
-`scoped` means request-cached on the server and new-per-call in the browser, not
-component-context caching. `singleton` shares only on the client (still scoped to
-the request on the server). `transient`/`trancient` always creates a new instance.
-No effect cleanup or hydration is performed by the registration.
+## Foundation
 
-## Initialization and Foundation
+```sh
+azure-net foundation schema
+azure-net foundation schema-rule
+azure-net foundation response
+azure-net foundation datasource
+azure-net foundation cookie-instance
+```
 
-| Command                                | Purpose                                                             |
-| -------------------------------------- | ------------------------------------------------------------------- |
-| `azure-net init folders-structure`     | Initialize architecture and Svelte aliases, preserve existing files |
-| `azure-net init edges`                 | Configure AzureNetPlugin in Vite (historical command name)          |
-| `azure-net install fresh`              | Structure, plugin, program.ts and optional Foundation artifacts     |
-| `azure-net create schema-factory`      | Foundation/Schema                                                   |
-| `azure-net create schema-rule`         | Foundation/Schema/CustomRules                                       |
-| `azure-net create response`            | Foundation/Response                                                 |
-| `azure-net create datasource`          | Foundation/Datasource                                               |
-| `azure-net create translation-manager` | Bootstrap/Localization                                              |
+Datasource and response templates expose interfaces as well as classes. Repositories depend on the datasource interface. Datasource creation offers an HttpProvider in Foundation/Provider; configure its empty prefixUrl before using it. The provider owns datasource construction, not repositories or use cases. Schema generation records defaultSchemaFactory in config.
 
-DI is centralized in Platform/Foundation/DI/ApplicationProvider.ts. Register repository/use-case factories there before presenter generation. The generator reads the actual returned service key (e.g. Orders), not a guessed context provider name. Module generation pauses for manual DI registration; it does not invent datasource configuration or edit user DI logic.
+## Bootstrap
 
-## Generation
+```sh
+azure-net bootstrap translations
+azure-net bootstrap middleware
+azure-net bootstrap error-handler
+```
 
-| Command after `azure-net generate` | Result                                                              |
-| ---------------------------------- | ------------------------------------------------------------------- |
-| `domain`                           | Interfaces in the context's Domain/Entities and Ports               |
-| `repo` / `repository`              | Repository, contract in Ports, optional UseCases                    |
-| `repository-method`                | Add a method and update the contract/UseCases                       |
-| `use-cases`                        | ClassMirror-based wrapper for an existing repository                |
-| `presenter`                        | Choose workspace/scope; use central ApplicationProvider             |
-| `module`                           | Domain, repository, UseCases, manual DI confirmation, presenter     |
-| `module-preset`                    | Predefined CRUD types/methods, UseCases, DI confirmation, presenter |
-| `component`                        | Ui/Components with Shared/Layout/Page selection                     |
-| `widget`                           | Ui/Widgets                                                          |
-| `design-component`                 | Ui/Design                                                           |
-| `types-json`                       | Add inferred fields to an existing entity interface                 |
-| `schema-from-type`                 | Populate schema rules from interface fields                         |
-| `routes`                           | Overwrite Platform/Bootstrap/Routes/index.ts                        |
+Translations use TranslationManager and `.useTranslations(manager)`. Middleware generation produces a client and server class with `execute` returning `next()`, under Bootstrap/Pipelines/Middlewares/Name. Delete the unused variant. For an existing customized Bootstrap.ts, commands print wiring instructions rather than rewriting arbitrary application logic. Fresh installation can compose Bootstrap.ts automatically.
 
-Interface declarations retain I; filenames omit it (IOrdersRepository in OrdersRepository.ts). Existing artifacts are not silently replaced; barrel exports are appended. Routes are the intentional overwrite exception: do not hand-edit their generated index.ts.
+## Generators
 
-Routes support ungrouped arrays, root route-group arrays, or groupRoutesFunc in config. The callback receives url, relativeDir, segments, dynamicParams, rootGroup, groupStack, depth, hasChildren, hasPage and hasServer; return a group name. Groups are exported variables, not a generated group object. Optional route segments produce both variants. Current template output uses `{param}`; rest-parameter semantics and Svelte encoded literal segments require additional handling before treating this as a complete Svelte route matcher.
+```sh
+azure-net generate aggregate
+azure-net generate aggregate-preset
+azure-net generate domain
+azure-net generate repository
+azure-net generate repository-method
+azure-net generate use-cases
+azure-net generate presenter
+azure-net generate store
+azure-net generate schema-from-type
+azure-net generate types-json
+azure-net generate routes
+```
 
-## Git workflow
+The aggregate is selected **inside a context**. Resources describe responses; DTO contains commands and queries. Repository interfaces belong to Domain/Ports. Use cases expose their own interfaces. Presenters consume use-case interfaces and are registered through RegisterProvider in their scope index.ts.
 
-`azure-net add commit-tools` installs NO packages. It backs up previous Prettier settings under .azure-net/PrettierBackups and replaces the configuration. Existing dependencies/scripts are not removed; install needed formatter tooling yourself.
+Composition.ts uses CompositionRoot at context level. Automatic composition wiring is optional; custom composition logic must not be overwritten merely to add another aggregate.
 
-`azure-net commit` commits staged changes only. Choose a type, enter a nonempty subject of at most 100 characters, optionally enter body, breaking changes and footer. Format is `feat(emoji): subject` (a breaking commit adds !).
+Routes are generated into `src/platform/Bootstrap/Routes/index.ts`. Repeated generation replaces the generated route list. Grouping produces separate arrays, not a runtime groups object.
 
-`azure-net push` runs project checks, stages with `git add .`, prompts for the commit, commits, then pushes. A failed step stops the sequence. Missing runChecksBeforePush means true; false or `--no-check` skips checks. Review your changes and .gitignore first: git add . intentionally stages all unignored changes. These commands do not set up Husky or install commitlint, semantic-release or git-cz.
+### Components
+
+```sh
+azure-net generate component core
+azure-net generate component page
+azure-net generate component scopes
+azure-net generate component composition
+```
+
+`composition` targets Components/Composite. Without a category, the CLI asks. Select the boundary, then enter a name such as `Card` or a nested relative path such as `Catalog/ProductCard`. A plain name goes directly under the chosen category (or chosen UI scope). For Scopes you can select an existing scope or create one. Absolute paths and `..` are rejected. Existing components are never overwritten.
 
 ## Checks
 
-Individual checks: presenter-names, provider-names, provider-graph, domain, imports, hooks, layer-imports, layer-boundaries, folders-structure.
+`azure-net check project` runs the optional read-only `format:check` script, architectural checks, lint and type checking. It never runs the potentially mutating `format` script. `azure-net check internal` runs only the CLI architectural checks. Individual commands include domain, imports, folders-structure, layer-imports, layer-boundaries, hooks, provider-graph, provider-names and presenter-names.
 
-`azure-net check internal` runs all checks. `azure-net check project` runs packageManager run format, internal, packageManager run lint and packageManager run check sequentially. Format can modify files. User hooks.server/hooks.client are forbidden; use program.ts and AzureNetPlugin.
+- Contexts cannot import other contexts. Aggregates in one context can cooperate. SharedKernel is importable from contexts, never the reverse.
+- Presentation boundaries can import contexts and Shared, not each other. Shared cannot depend on a concrete boundary.
+- App directory names use PascalCase letters/digits. Framework filenames outside app retain their framework conventions.
+- Consts, utils and common directories are forbidden (case-insensitive). Shared is reserved for Presentation/Shared.
+- Context interfaces use I prefix. Resources, enums, repositories, use cases and presenters have their corresponding suffixes. Application/Services and Infrastructure services remain supported.
+- Repository/use-case dependencies are typed by interfaces; presenter use-case dependencies are interfaces too. Inferred cookie/storage instances and presenter stores are not indiscriminately rejected.
+- Contexts do not contain top-level functions. Class methods and nested DI factories are allowed.
+- Imports are ordered runtime, types, then styles/other side-effect imports.
 
-## Manual acceptance checklist
+These are static architectural checks, not a security sandbox or a substitute for runtime tests.
 
-1. In a disposable project, initialize flat Presentation; repeat with Admin/Public workspaces.
-2. Generate a domain/repo in Orders. Verify Entities/Ports, filenames, imports and contracts.
-3. Register UseCases in central DI; create an Admin/Scopes/Orders presenter and schemas.
-4. Generate module-preset, UI artifacts, translations and routes. Repeat routes to verify overwrite.
-5. Introduce a cross-context import and an Admin-to-Public import: internal must fail. Imports from SharedKernel/Shared must pass.
-6. Verify schema-from-type, types-json and repository-method on existing generated artifacts.
-7. Test commit/push only in a disposable Git repository with a test remote. Exercise failing checks and --no-check.
+## Migration
+
+```sh
+azure-net migrate --dry-run
+azure-net migrate
+```
+
+Commit or back up the project first. Review the plan before applying. Migration preserves uncertain files in app/.backup and reports manual work; it cannot infer arbitrary business semantics. Review the resulting Composition roots, constructors, presenters and Bootstrap, then run project checks. Migration never warrants that an arbitrary legacy application is production-ready without manual verification.
 
 ## Development
 
-`pnpm typecheck`, `pnpm lint`, `pnpm test`. Build synchronizes TypeScript into the checked-in JavaScript used by bin/azure-net.js. Always build before packing. Tests compile generated modules against the adjacent built kit when available.
-
-## Migrate a legacy project
-
-```bash
-azure-net migrate --dry-run
-azure-net migrate
-# Non-interactive apply, after reviewing the plan:
-azure-net migrate --yes
+```sh
+pnpm typecheck
+pnpm lint
+pnpm test
 ```
 
-Run from the project root. Dry-run does not write files. Apply requires confirmation (or --yes), rejects occupied targets and detects source changes since planning. Commit or otherwise back up your work first.
+TypeScript is the source of truth. Build regenerates adjacent JavaScript used by the published CLI and dist declarations. Never hand-edit generated JavaScript.
 
-Legacy application areas become Presentation workspaces; domain subfolders become Contexts. Repositories and UseCases are matched by name, including legacy singular UseCase filenames. UI and presentation move into Ui and Scopes. Foundation constructs move into Platform/Foundation, runtime into Bootstrap. Shared presentation becomes Shared. Ambiguous/colliding files are preserved byte-for-byte in src/app/.backup with their original hierarchy. The CLI never silently chooses a winner or automatically merges distinct domain models.
+## Fast generation
 
-Static imports/re-exports, literal dynamic imports, Svelte script imports and local stylesheet/asset references are rewritten. Named/default barrel exports are followed. Dynamic import expressions and glob patterns require review. Shared business dependencies that would violate new context boundaries are reported; the migration does not invent domain boundaries or move arbitrary types into SharedKernel to hide violations.
+`feature` generates a read operation by default. `feature-preset` generates collection/resource/create/update/destroy. Both use the same templates as the detailed aggregate flow and can run without prompts when all choices are supplied:
 
-Supported declarative legacy providers are consolidated into a single Foundation/DI/ApplicationProvider.ts. Datasource construction stays inside register, HTTP/cookie callbacks are retained, repository sharing is retained with private lazy getters. There are no separate datasource/infrastructure providers. Custom register blocks, boot hooks, unsupported provider logic and duplicate service keys require manual review; original provider files are archived. Structural migration is not an automatic kit API upgrade.
+```sh
+azure-net generate feature-preset \
+  --context Commerce --aggregate Order --name Order \
+  --route /orders --datasource ApiDatasource \
+  --boundary Public --scope Shopping --auto-compose
 
-Full originals of changed/removed files and a manifest are saved under .azure-net/migrations/migration-\*/original. Report.md links relocated/archived files and explains review items. Write failures restore original contents. Obsolete source directories are removed only after their files have been written to their destinations. .backup is ignored by CLI checks and excluded in tsconfig; inspect it before deciding what to retain. Keep migration snapshots private, since original source may contain sensitive configuration.
+azure-net generate feature \
+  --context SiteMeta --aggregate SiteSettings \
+  --route /settings --datasource ApiDatasource \
+  --auto-compose --no-presenter
+```
 
-Afterwards run check internal, your project's typecheck and build. These can still fail on ambiguous files, old APIs and genuine new architecture violations; the report is the handoff for manual resolution. Repeating migrate on an already migrated tree stops without changing it.
+For custom methods and typed fields, use a JSON spec rather than answering per-field questions:
 
-The datasource-provider creation command has been removed, including its fresh-install prompt. Configure datasource options in ApplicationProvider.register instead.
+```json
+{
+	"context": "Commerce",
+	"aggregate": "Order",
+	"datasource": "ApiDatasource",
+	"boundary": "Public",
+	"scope": "Shopping",
+	"composition": true,
+	"types": [
+		{ "name": "IOrderResource", "layer": "Resources", "fields": { "id": "string", "total": "number" } },
+		{ "name": "ICreateOrderCommand", "layer": "DTO", "fields": { "productId": "string", "quantity": "number" } }
+	],
+	"methods": [
+		{ "name": "resource", "httpMethod": "get", "route": "/orders", "pathParam": "string", "response": "IOrderResource" },
+		{ "name": "create", "httpMethod": "post", "route": "/orders", "body": "ICreateOrderCommand", "response": "IOrderResource" }
+	]
+}
+```
 
-## Package subpath imports (SvelteKit 3)
+```sh
+azure-net generate feature --spec ./order.feature.json
+```
 
-Generation uses `#contexts`, `#presentation` and `#platform`. Initialization and migration merge mappings into `package.json#imports`, preserving unrelated package fields and custom imports. Conflicting reserved mappings cause an error rather than being overwritten. No aliases are added to Vite or Svelte config. Fresh install still configures AzureNetPlugin in Vite because it is a plugin, not an alias.
-
-Each prefix has a root index.ts target and a wildcard mapping. The wildcard default is `./src/app/Contexts/*` (or Presentation/Platform); its types condition also tries `*.ts` and `*/index.ts`. This preserves extensionless imports and directory barrels in TypeScript's bundler resolution. SvelteKit/Vite bundles the application source; this is not a promise that plain Node can execute raw extensionless TypeScript without a loader.
-
-For example: `import { ApplicationProvider } from '#platform/Foundation/DI'`. A scaffolded project's existing `#lib` entry is preserved. See [SvelteKit subpath imports](https://svelte.dev/docs/kit/$lib).
-
-The CLI no longer automatically converts or removes a legacy svelte.config during structure migration. Upgrade legacy SvelteKit configuration separately with its official migration tool. Existing deprecated alias settings are not silently removed while old application code may still use them.
-
-The first datasource is constructed inside an empty generated ApplicationProvider.register. Configure its HTTP options, pass it to repositories and return UseCases factories. User-owned DI is not overwritten. No DatasourceProvider is generated. Until service registration, `void datasource` avoids an unused-variable diagnostic.
-
-For local testing, use a newly named tarball when its contents change. Replacing an archive under the same file: path and version can reuse package-manager cached contents. Verify the installed implementation with the project-local `pnpm exec azure-net`, not an unrelated global executable.
-
-## Reactive state and DI
-
-- `azure-net generate store` selects a presentation workspace and an existing/new scope, then writes a PascalCase `.svelte.ts` class and a `RegisterProvider(..., 'singleton')` accessor. Without workspaces the path is `src/app/Presentation/Scopes/{Scope}/{Name}.svelte.ts`.
-- Presenter generation and migration emit `RegisterProvider`.
-- Initial structure and migration emit `CreateDiContainer` in `Platform/Foundation/DI/ApplicationProvider.ts`; datasource construction remains inside `register`.
-- `defaultPresenterFactory` is no longer supported or generated; migration removes the legacy setting.
-- Plugin initialization enables `compilerOptions.experimental.async: true` for `useBoot`/`hydratable` and preserves other literal options. Complex spread configurations need manual editing rather than a guessed rewrite.
-
-### Built-in translation manager
-
-The localization scaffold imports only `@azure-net/kit/i18n`. Await
-`TranslationManager().preloadTranslation()` in useServer before resolve;
-it writes `state.currLocale` and dictionary snapshots automatically. Call
-`TranslationManager().syncFromState(state)` in useBoot and `initializeClient()`
-in useClient. Templates include these integration hints. In components use
-`t(key)` and `manager.locale`, not `$t` / `$locale`. No separate translations
-package, exportState or restoreState is required.
-
-### Presenter and translation API migration
-
-- Presenter factory imports are resolved through local modules and barrels, including aliases.
-- Statically declared custom injections (for example notification/modal accessors) become constructor arguments. The factory module retains a plain exported dependency object, not a createPresenterFactory call.
-- Async helpers are imported from @azure-net/kit/delivery; factory-specific error types are preserved with type-only specialization. Custom overrides are injected rather than replaced with kit helpers.
-- Closures, mutable private variables and detached callbacks are retained behind class accessors. Registration uses RegisterProvider with scoped lifecycle. Consumers and re-exports are updated.
-- Opaque spreads, getter-based injection definitions, local per-presenter injection overrides, explicit factory result types and unsupported return shapes require manual review. No application configuration is executed to infer their meaning.
-- A single identifiable translation manager is connected to useTranslations before the existing bootstrap chain. Known zero-argument legacy preload/initialization calls become resolved promises so existing helper consumers remain compatible. Custom locale resolvers and ambiguous managers are not rewritten automatically.
-- Existing bootstrap dependencies/Container usage, stores and other removed kit APIs are not converted into new application-specific state architecture by this migration. Check the resulting project and migration report before publishing.
-
-Run azure-net migrate --dry-run first. Migration also works on presenters left behind in an already migrated Contexts/Presentation/Platform structure.
+Explicit CLI flags override the spec; unspecified flags do not. `--no-composition` prints manual wiring, `--no-presenter` omits presentation generation, and `--schemas` requests schemas. Without an explicit composition decision, the CLI asks before modifying Composition.ts. Nonliteral/custom DI code is preserved and requires manual wiring. No automatic overwrite of existing aggregate implementations.

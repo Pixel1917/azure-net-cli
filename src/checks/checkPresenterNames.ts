@@ -1,5 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import ts from 'typescript';
+import { location, parseSource, report, type Issue } from './architecture.js';
 
 type PresenterOccurrence = {
 	id: string;
@@ -155,11 +157,35 @@ export default async function checkPresenterNames(): Promise<void> {
 
 	const files = await listSourceFiles(srcPath);
 	const fileContents = new Map<string, string>();
+	const classIssues: Issue[] = [];
+	let classCount = 0;
 
 	for (const filePath of files) {
 		const content = await fs.readFile(filePath, 'utf-8');
 		fileContents.set(filePath, content);
+		const parts = location(filePath);
+		if (parts[0] !== 'Presentation' || parts[2] !== 'Scopes') continue;
+		if (parts.slice(3, -1).some((part) => /^(?:stores?|schemas?)$/i.test(part))) continue;
+		const basename = path.basename(filePath).replace(/(?:\.(?:svelte|d))?\.[^.]+$/, '');
+		if (/(?:Store|Schema)$/.test(basename)) continue;
+		const source = parseSource(content, filePath);
+		const visit = (node: ts.Node): void => {
+			if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+				classCount += 1;
+				const line = source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
+				if (!node.name || !/^[A-Z][A-Za-z0-9]*Presenter$/.test(node.name.text))
+					classIssues.push({ file: filePath, line, message: 'Scope presenter class name must end with Presenter' });
+				if (!/^[A-Z][A-Za-z0-9]*Presenter$/.test(basename))
+					classIssues.push({ file: filePath, line, message: 'Scope presenter file name must end with Presenter' });
+				// Nested implementation classes are not separate scope presenters.
+				return;
+			}
+			ts.forEachChild(node, visit);
+		};
+		visit(source);
 	}
+	report('Presenter classes', classIssues);
+	console.log(`Analyzed ${classCount} scope presenter classes.`);
 
 	const globalFactoryNames = new Set<string>();
 	for (const content of fileContents.values()) {
@@ -174,7 +200,7 @@ export default async function checkPresenterNames(): Promise<void> {
 	}
 
 	if (!occurrences.length) {
-		console.log('✅ No presenter declarations found.');
+		if (!classCount) console.log('No scope presenter classes or legacy presenter registrations found.');
 		return;
 	}
 

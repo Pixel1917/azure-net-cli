@@ -6,7 +6,8 @@ import {
 	resolveContextAlias,
 	resolveDomainForRepository,
 	resolveRepositoriesPath,
-	selectContext
+	selectContext,
+	selectAggregate
 } from './repositoryModuleShared.js';
 
 export default async function generateUseCases(): Promise<void> {
@@ -16,7 +17,9 @@ export default async function generateUseCases(): Promise<void> {
 		return;
 	}
 
-	const repositoriesPath = resolveRepositoriesPath(contextName);
+	const aggregateName = await selectAggregate(contextName);
+	if (!aggregateName) return;
+	const repositoriesPath = resolveRepositoriesPath(contextName, aggregateName);
 	const repositories = await getAvailableTsNames(repositoriesPath);
 	if (!repositories.length) {
 		console.error(`❌ No repositories found in ${repositoriesPath}`);
@@ -42,6 +45,7 @@ export default async function generateUseCases(): Promise<void> {
 	const domainName = await resolveDomainForRepository({
 		contextName,
 		contextAlias,
+		aggregateName,
 		repositoryName: String(repositoryName)
 	});
 

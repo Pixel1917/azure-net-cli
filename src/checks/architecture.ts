@@ -82,7 +82,7 @@ export async function importResolver(): Promise<(file: string, source: string) =
 	const aliases: Record<string, string> = {
 		'#contexts': 'src/app/Contexts',
 		'#presentation': 'src/app/Presentation',
-		'#platform': 'src/app/Platform',
+		'#platform': 'src/platform',
 		$lib: 'src/lib',
 		'#lib': 'src/lib'
 	};
@@ -146,4 +146,202 @@ export async function checkDependencies(label: string, rule: (source: string[], 
 		issues.push({ file: appRoot(), line: 1, message: String(error) });
 	}
 	report(label, issues);
+}
+
+export type ProviderDeclaration = {
+	key: string;
+	name: string;
+	explicitName?: string;
+	file: string;
+	line: number;
+	dependsOn: string[];
+};
+
+/** Static provider identities use module bindings, not dependency-object keys or optional display names. */
+export async function providerDeclarations(): Promise<ProviderDeclaration[]> {
+	const files = await sourceFiles(path.join(process.cwd(), 'src'));
+	const resolve = await importResolver();
+	const modules = new Map(files.map((file) => [file, parseSource('', file)]));
+	for (const file of files) modules.set(file, parseSource(await fs.readFile(file, 'utf8'), file));
+	const moduleFile = (file: string, specifier: string): string | undefined => {
+		const target = resolve(file, specifier);
+		if (!target) return undefined;
+		const stem = target.replace(/\.[cm]?[jt]sx?$/, '');
+		return [
+			target,
+			`${stem}.ts`,
+			`${stem}.tsx`,
+			`${stem}.js`,
+			`${stem}.mts`,
+			path.join(target, 'index.ts'),
+			path.join(target, 'index.js')
+		].find((candidate) => modules.has(candidate));
+	};
+	const unwrap = (node: ts.Expression): ts.Expression => {
+		while (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isSatisfiesExpression(node) || ts.isNonNullExpression(node))
+			node = node.expression;
+		return node;
+	};
+	const bindings = new Map<string, ts.Expression>();
+	const references = new Map<string, string>();
+	const exports = new Map<string, string>();
+	const stars = new Map<string, string[]>();
+	const key = (file: string, name: string): string => `${file}#${name}`;
+	for (const [file, source] of modules) {
+		for (const statement of source.statements) {
+			if (ts.isVariableStatement(statement)) {
+				for (const declaration of statement.declarationList.declarations) {
+					if (!ts.isIdentifier(declaration.name) || !declaration.initializer) continue;
+					bindings.set(key(file, declaration.name.text), unwrap(declaration.initializer));
+					if (statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword))
+						exports.set(key(file, declaration.name.text), key(file, declaration.name.text));
+				}
+			}
+			if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)) {
+				const target = moduleFile(file, statement.moduleSpecifier.text);
+				if (!target) continue;
+				const clause = statement.importClause;
+				if (clause?.name) references.set(key(file, clause.name.text), key(target, 'default'));
+				if (clause?.namedBindings && ts.isNamedImports(clause.namedBindings))
+					for (const element of clause.namedBindings.elements)
+						references.set(key(file, element.name.text), key(target, (element.propertyName ?? element.name).text));
+				if (clause?.namedBindings && ts.isNamespaceImport(clause.namedBindings))
+					references.set(key(file, clause.namedBindings.name.text), `${target}#`);
+			}
+			if (ts.isExportDeclaration(statement)) {
+				const target =
+					statement.moduleSpecifier && ts.isStringLiteral(statement.moduleSpecifier)
+						? moduleFile(file, statement.moduleSpecifier.text)
+						: file;
+				if (!target) continue;
+				if (statement.exportClause && ts.isNamedExports(statement.exportClause))
+					for (const element of statement.exportClause.elements)
+						exports.set(key(file, element.name.text), key(target, (element.propertyName ?? element.name).text));
+				else if (!statement.exportClause) stars.set(file, [...(stars.get(file) ?? []), target]);
+			}
+			if (ts.isExportAssignment(statement)) bindings.set(key(file, 'default'), unwrap(statement.expression));
+		}
+	}
+	const expressionKey = (file: string, expression: ts.Expression): string | undefined => {
+		expression = unwrap(expression);
+		if (ts.isIdentifier(expression)) return key(file, expression.text);
+		if (ts.isPropertyAccessExpression(expression) && expression.name.text === 'resolve') return expressionKey(file, expression.expression);
+		if (ts.isPropertyAccessExpression(expression) && ts.isIdentifier(expression.expression)) {
+			const namespace = references.get(key(file, expression.expression.text));
+			if (namespace?.endsWith('#')) return namespace + expression.name.text;
+		}
+		return undefined;
+	};
+	const lookup = (id: string, seen = new Set<string>()): string | undefined => {
+		if (seen.has(id)) return undefined;
+		seen.add(id);
+		const ref = references.get(id) ?? exports.get(id);
+		if (ref && ref !== id) return lookup(ref, seen);
+		if (bindings.has(id)) {
+			const alias = expressionKey(id.slice(0, id.lastIndexOf('#')), bindings.get(id)!);
+			return alias ? lookup(alias, seen) : id;
+		}
+		const split = id.lastIndexOf('#');
+		for (const target of stars.get(id.slice(0, split)) ?? []) {
+			const found = lookup(key(target, id.slice(split + 1)), new Set(seen));
+			if (found) return found;
+		}
+		return undefined;
+	};
+	const objectProperties = (
+		file: string,
+		expression: ts.Expression | undefined,
+		seen = new Set<string>()
+	): ts.ObjectLiteralElementLike[] => {
+		if (!expression) return [];
+		expression = unwrap(expression);
+		const id = expressionKey(file, expression);
+		if (id) {
+			const target = lookup(id);
+			if (!target || seen.has(target)) return [];
+			seen.add(target);
+			return objectProperties(target.slice(0, target.lastIndexOf('#')), bindings.get(target), seen);
+		}
+		if (!ts.isObjectLiteralExpression(expression)) return [];
+		return expression.properties.flatMap((property) =>
+			ts.isSpreadAssignment(property) ? objectProperties(file, property.expression, new Set(seen)) : [property]
+		);
+	};
+	const literal = (node: ts.Node | undefined): string | undefined =>
+		node && (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) ? node.text : undefined;
+	const providers: ProviderDeclaration[] = [];
+	for (const [file, source] of modules) {
+		const apis = new Map(['CreateServiceContainer', 'CompositionRoot', 'CreateDiContainer'].map((name) => [name, name]));
+		const namespaces = new Set<string>();
+		for (const statement of source.statements) {
+			if (
+				!ts.isImportDeclaration(statement) ||
+				!ts.isStringLiteral(statement.moduleSpecifier) ||
+				!statement.moduleSpecifier.text.startsWith('@azure-net/kit')
+			)
+				continue;
+			const clause = statement.importClause;
+			if (clause?.isTypeOnly) continue;
+			if (clause?.namedBindings && ts.isNamedImports(clause.namedBindings))
+				for (const item of clause.namedBindings.elements)
+					if (!item.isTypeOnly) apis.set(item.name.text, (item.propertyName ?? item.name).text);
+			if (clause?.namedBindings && ts.isNamespaceImport(clause.namedBindings)) namespaces.add(clause.namedBindings.name.text);
+		}
+		const visit = (node: ts.Node): void => {
+			if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
+				const callee = node.expression;
+				const api = ts.isIdentifier(callee)
+					? apis.get(callee.text)
+					: ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression) && namespaces.has(callee.expression.text)
+						? callee.name.text
+						: undefined;
+				if (api && ['CreateServiceContainer', 'CompositionRoot', 'CreateDiContainer'].includes(api)) {
+					const args = node.arguments ?? [];
+					const config = args[api === 'CompositionRoot' ? 0 : 1];
+					const properties = objectProperties(file, config);
+					const get = (name: string): ts.Expression | undefined => {
+						const property = [...properties]
+							.reverse()
+							.find((p) => p.name && (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)) && p.name.text === name);
+						return property && ts.isPropertyAssignment(property)
+							? property.initializer
+							: property && ts.isShorthandPropertyAssignment(property)
+								? property.name
+								: undefined;
+					};
+					const explicitName = api === 'CompositionRoot' ? literal(get('name')) : literal(args[0]);
+					const bound = [...bindings].find(([id, expression]) => id.startsWith(`${file}#`) && expression === node)?.[0];
+					const id = bound ?? key(file, `@${node.pos}`);
+					const dependsOn = objectProperties(file, get('dependsOn')).flatMap((property) => {
+						const expression = ts.isShorthandPropertyAssignment(property)
+							? property.name
+							: ts.isPropertyAssignment(property)
+								? property.initializer
+								: undefined;
+						const ref = expression && expressionKey(expression.getSourceFile().fileName, expression);
+						if (ref) return [lookup(ref) ?? ref];
+						if (api === 'CreateDiContainer' && property.name && ts.isIdentifier(property.name)) return [`legacy:${property.name.text}`];
+						return [];
+					});
+					providers.push({
+						key: id,
+						name: bound?.slice(bound.lastIndexOf('#') + 1) ?? explicitName ?? 'CompositionRoot',
+						explicitName,
+						file,
+						line: source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1,
+						dependsOn
+					});
+				}
+			}
+			ts.forEachChild(node, visit);
+		};
+		visit(source);
+	}
+	for (const provider of providers)
+		provider.dependsOn = provider.dependsOn.map((dependency) =>
+			dependency.startsWith('legacy:')
+				? (providers.find((item) => item.explicitName === dependency.slice(7))?.key ?? dependency)
+				: dependency
+		);
+	return providers;
 }

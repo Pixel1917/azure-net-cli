@@ -1,1 +1,1 @@
-export { default as addLint } from './addLint.js';
+export { default as prettierConfig } from './prettierConfig.js';

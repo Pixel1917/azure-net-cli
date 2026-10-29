@@ -143,21 +143,21 @@ test('fresh initialization is idempotent and ignores legacy contexts', () =>
 		await initStructure();
 		assert.deepEqual(await snapshot(process.cwd()), once);
 		assert.deepEqual(await discoverContexts(), ['SharedKernel']);
-		await fs.access('src/app/Contexts/SharedKernel/Domain/Ports/index.ts');
-		await fs.access('src/app/Platform/Foundation/DI/ApplicationProvider.ts');
-		await fs.access('src/app/Presentation/Ui');
+		await fs.access('src/app/Contexts/SharedKernel/Contracts');
+		await fs.access('src/platform/Foundation');
+		await fs.access('src/app/Presentation/Shared/Ui');
 		assert.equal((await loadUserConfig()).runChecksBeforePush, true);
 	}));
 
 test('empty Presentation seeds config workspaces once, always adding Shared', () =>
 	fixture(async () => {
 		await fs.mkdir('src/app/Presentation', { recursive: true });
-		await fs.writeFile('azure-net.config.ts', "export default { presentationWorkspaces: ['admin-tools'] };\n");
+		await fs.writeFile('azure-net.config.ts', "export default { presentationWorkspaces: ['AdminTools'] };\n");
 		await initStructure();
 		assert.deepEqual(await fs.readdir('src/app/Presentation'), ['AdminTools', 'Shared']);
 		await fs.writeFile('azure-net.config.ts', "export default { presentationWorkspaces: ['Later'], runChecksBeforePush: false };\n");
 		await initStructure();
-		assert.deepEqual(await fs.readdir('src/app/Presentation'), ['AdminTools', 'Shared']);
+		assert.deepEqual(await fs.readdir('src/app/Presentation'), ['AdminTools', 'Later', 'Shared']);
 		assert.equal((await loadUserConfig()).runChecksBeforePush, false);
 	}));
 
@@ -166,23 +166,24 @@ test('existing flat Presentation is not converted by config workspaces', () =>
 		await fs.mkdir('src/app/Presentation/Ui', { recursive: true });
 		await fs.writeFile('azure-net.config.js', "export default { presentationWorkspaces: ['Admin'] };");
 		await initStructure();
-		assert.deepEqual(await fs.readdir('src/app/Presentation'), ['Scopes', 'Shell', 'Ui']);
+		assert.deepEqual(await fs.readdir('src/app/Presentation'), ['Admin', 'Shared', 'Ui']);
+		prompts.inject(['Admin']);
 		const workspace = await selectWorkspace();
-		assert.equal(workspace.name, '');
-		assert.equal(workspace.alias, '#presentation');
+		assert.equal(workspace.name, 'Admin');
+		assert.equal(workspace.alias, '#presentation/Admin');
 		prompts.inject(['__create__', 'order-details']);
 		assert.equal(await selectScope(workspace), 'OrderDetails');
-		await fs.access('src/app/Presentation/Scopes/OrderDetails');
+		await fs.access('src/app/Presentation/Admin/Scopes/OrderDetails');
 	}));
 
 test('missing config initializes defaults and context prompts create Pascal names', () =>
 	fixture(async () => {
 		await initializeConfigDefaults();
-		assert.deepEqual(await loadUserConfig(), { runChecksBeforePush: true });
+		assert.deepEqual(await loadUserConfig(), { appBoundaries: ['Public'], runChecksBeforePush: true });
 		prompts.inject(['__create__', 'sales-orders']);
 		assert.equal(await selectContext(), 'SalesOrders');
 		assert.deepEqual(await discoverContexts(), ['SalesOrders', 'SharedKernel']);
-		await fs.access('src/app/Contexts/SalesOrders/Application/UseCases/index.ts');
+		await fs.access('src/app/Contexts/SalesOrders');
 	}));
 
 const { configureAzureNetPlugin } = await import('../src/init/initEdges.ts');

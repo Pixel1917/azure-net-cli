@@ -8,50 +8,43 @@ import ts from 'typescript';
 import { planMigration, applyMigration } from '../src/migrate/migrate.js';
 import { updateDefaultFactoryConfig } from '../src/scaffolds/updateDefaultFactoryConfig.js';
 
-test('generated DI shares dependencies only within one register invocation', async () =>
+test('provider graphs preserve lazy service sharing instead of flattening into global DI', async () =>
 	fixture(async (root) => {
 		const plan = await planMigration(root);
-		const source = plan.writes.get(path.join(root, 'src/app/Platform/Foundation/DI/ApplicationProvider.ts')).toString();
-		const code = ts.transpileModule(source, {
-			compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
-		}).outputText;
+		assert(![...plan.writes.keys()].some((file) => file.endsWith('/Foundation/DI/ApplicationProvider.ts')));
+		const file = path.join(root, 'src/app/public/layers/application/providers/ApplicationProvider.ts');
+		const source = plan.writes.get(file).toString();
+		assert.match(source, /CreateServiceContainer/);
+		assert.match(source, /dependsOn:\s*\{PublicInfrastructureProvider\}/);
+		assert.match(source, /PublicInfrastructureProvider.OrderRepository/);
+		assert(plan.issues.some((issue) => /CompositionRoot/.test(issue.reason)));
 		let register;
-		class Api {
-			constructor(config) {
-				this.config = config;
-			}
-		}
-		class OrderRepository {
-			constructor(ds) {
-				this.ds = ds;
-			}
-		}
 		class OrderUseCases {
 			constructor(repo) {
 				this.repo = repo;
 			}
 		}
-		vm.runInNewContext(code, {
-			exports: {},
-			require: (name) => {
+		const exports = {};
+		vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, {
+			exports,
+			require(name) {
 				if (name === '@azure-net/kit')
 					return {
-						CreateDiContainer: (_, config) => {
-							register = config.register;
+						CreateServiceContainer: (_, settings) => {
+							register = settings.register;
+							return () => {};
 						}
 					};
-				if (name.endsWith('/Api')) return { Api };
-				if (name.endsWith('/OrderRepository')) return { OrderRepository };
-				if (name.endsWith('/OrderUseCases')) return { OrderUseCases };
-				throw new Error(`Unexpected generated dependency: ${name}`);
+				if (name.endsWith('use-cases')) return { OrderUseCases };
+				if (name.endsWith('InfrastructureProvider')) return { PublicInfrastructureProvider: () => {} };
+				throw new Error(name);
 			}
 		});
-		const first = register();
-		const second = register();
-		assert.equal(first.Orders().repo, first.Orders().repo);
-		assert.notEqual(first.Orders().repo, second.Orders().repo);
-		assert.notEqual(first.Orders().repo.ds, second.Orders().repo.ds);
-		assert.equal(first.Orders().repo.ds.config.url, 'https://api.example.com');
+		const repo = {};
+		const services = register({ PublicInfrastructureProvider: { OrderRepository: repo } });
+		assert.equal(services.Orders().repo, repo);
+		assert.equal(services.Orders().repo, services.Orders().repo);
+		assert.notEqual(services.Orders(), services.Orders()); // The container, not the migration, owns caching.
 	}));
 
 test('legacy folder migration also upgrades presenters and their consumers', async () =>
@@ -77,8 +70,12 @@ export const OrderPresenter = Presenter('Order', ({ createAsyncResource }) => {
 		const plan = await planMigration(root);
 		const generated = plan.writes.get(path.join(root, 'src/app/Presentation/Public/Scopes/Order/OrderPresenter.ts')).toString();
 		assert.match(generated, /export class OrderPresenter/);
-		assert.match(generated, /useOrderPresenter = RegisterProvider/);
-		assert.match(generated, /ApplicationProvider as PublicApplicationProvider/);
+		assert.doesNotMatch(generated, /useOrderPresenter = RegisterProvider/);
+		assert.match(
+			plan.writes.get(path.join(root, 'src/app/Presentation/Public/Scopes/Order/index.ts')).toString(),
+			/useOrderPresenter = RegisterProvider/
+		);
+		assert.match(generated, /PublicApplicationProvider/);
 		assert.doesNotMatch(generated, /AppPresenter/);
 		assert.match(plan.writes.get(path.join(root, 'src/routes/+page.svelte')).toString(), /useOrderPresenter as OrderPresenter/);
 	}));
@@ -97,9 +94,9 @@ async function fixture(run) {
 		);
 		await put('svelte.config.js', `export default {kit:{alias:{$public:'./src/app/public','$shared-kernel':'./src/app/shared-kernel'}}};`);
 		await put('tsconfig.json', '{"compilerOptions":{"strict":true}}');
-		await put('src/app/public/layers/domain/order/model/Order.ts', 'export interface IOrder { id: number }');
-		await put('src/app/public/layers/domain/order/model/index.ts', "export * from './Order';");
-		await put('src/app/public/layers/domain/order/index.ts', "export * from './model';");
+		await put('src/app/public/layers/domain/order/resources/Order.ts', 'export interface IOrder { id: number }');
+		await put('src/app/public/layers/domain/order/resources/index.ts', "export * from './Order';");
+		await put('src/app/public/layers/domain/order/index.ts', "export * from './resources';");
 		await put(
 			'src/app/public/layers/infrastructure/http/repositories/OrderRepository.ts',
 			"import type { IOrder } from '../../../domain/order'; export class OrderRepository { constructor(public ds: unknown) {} }"
@@ -131,10 +128,10 @@ async function fixture(run) {
 			"import { PublicApplicationProvider } from '../../application/providers/ApplicationProvider'; export const resolve = () => PublicApplicationProvider().Orders;"
 		);
 		await put(
-			'src/app/public/ui/widgets/card/Component.svelte',
+			'src/app/public/ui/components/core/card/Component.svelte',
 			`<script lang="ts">import type { IOrder } from '$public/layers/domain/order';</script><style lang="scss">@use './style';</style>`
 		);
-		await put('src/app/public/ui/widgets/card/style.scss', '.card { color: red }');
+		await put('src/app/public/ui/components/core/card/style.scss', '.card { color: red }');
 		await put('src/app/public/mystery/data.bin', Buffer.from([0, 255, 1, 2]));
 		await put('src/routes/+page.ts', "export { OrderUseCases } from '$public/layers/application/use-cases/OrderUseCases';");
 		await run(root, put);
@@ -143,38 +140,34 @@ async function fixture(run) {
 	}
 }
 
-test('migration is planned read-only, applies moves, rewrites imports/styles and rebuilds DI', async () =>
+test('migration is planned read-only, applies known moves, rewrites imports/styles and preserves unresolved sources', async () =>
 	fixture(async (root) => {
 		const plan = await planMigration(root);
-		assert.equal(await fs.readFile(path.join(root, 'src/app/public/ui/widgets/card/style.scss'), 'utf8'), '.card { color: red }');
+		assert.equal(await fs.readFile(path.join(root, 'src/app/public/ui/components/core/card/style.scss'), 'utf8'), '.card { color: red }');
 		assert(!plan.issues.some((i) => i.reason.startsWith('DI not migrated')), JSON.stringify(plan.issues));
 		const report = await applyMigration(plan);
-		const provider = await fs.readFile(path.join(root, 'src/app/Platform/Foundation/DI/ApplicationProvider.ts'), 'utf8');
-		assert.match(provider, /https:\/\/api.example.com/);
-		assert.match(provider, /Orders: \(\) =>/);
-		assert.doesNotMatch(provider, /dependsOn|DatasourceProvider|PublicInfrastructureProvider/);
-		const transformed = ts.transpileModule(provider, { reportDiagnostics: true, compilerOptions: { target: ts.ScriptTarget.ES2022 } });
-		assert.equal(transformed.diagnostics.length, 0);
-		const component = await fs.readFile(path.join(root, 'src/app/Presentation/Public/Ui/Widgets/Card/Component.svelte'), 'utf8');
-		assert.match(component, /\#contexts\/Order\/Domain\/Entities\/Order/);
+		const component = await fs.readFile(path.join(root, 'src/app/Presentation/Public/Ui/Components/Core/Card/Component.svelte'), 'utf8');
+		assert.match(component, /\#contexts\/Public\/Order\/Domain/);
 		assert.match(component, /\.\/Style.scss/);
 		assert.match(
 			await fs.readFile(path.join(root, 'src/routes/+page.ts'), 'utf8'),
-			/\#contexts\/Order\/Application\/UseCases\/OrderUseCases/
+			/\#contexts\/Public\/Order\/Application\/UseCases\/OrderUseCases/
 		);
 		assert.match(
 			await fs.readFile(path.join(root, 'src/app/Presentation/Public/Scopes/Order/OrderPresenter.ts'), 'utf8'),
-			/ApplicationProvider as PublicApplicationProvider/
+			/PublicApplicationProvider/
 		);
 		assert.deepEqual(await fs.readFile(path.join(root, 'src/app/.backup/public/mystery/data.bin')), Buffer.from([0, 255, 1, 2]));
-		await assert.rejects(fs.access(path.join(root, 'src/app/public')));
+		assert.deepEqual(await fs.readFile(path.join(root, 'src/app/public/mystery/data.bin')), Buffer.from([0, 255, 1, 2]));
 		assert.match(await fs.readFile(report, 'utf8'), /mystery/);
 		const config = await fs.readFile(path.join(root, 'azure-net.config.ts'), 'utf8');
 		await fs.access(path.join(root, 'svelte.config.js'));
 		assert.match(await fs.readFile(path.join(root, 'package.json'), 'utf8'), /#contexts/);
-		assert.doesNotMatch(config, /\.\.\.|contexts:/);
-		assert.match(config, /presentationWorkspaces/);
-		await assert.rejects(planMigration(root), /Nothing to migrate/);
+		assert.doesNotMatch(config, /\.\.\./);
+		assert.match(config, /appBoundaries/);
+		const second = await planMigration(root);
+		assert.equal(second.moves.length, 0);
+		await applyMigration(second);
 	}));
 
 test('refuses a changed source after preview', async () =>
@@ -197,30 +190,32 @@ test('flattens only literal config spreads, preserves functions and dynamic spre
 
 test('follows default and renamed barrel exports without changing the imported symbol', async () =>
 	fixture(async (root, put) => {
-		await put('src/app/public/ui/widgets/card/index.ts', "export { default as Card } from './Component.svelte';");
-		await put('src/routes/+page.ts', "import { Card as OrderCard } from '$public/ui/widgets/card'; export { OrderCard };");
+		await put('src/app/public/ui/components/core/card/index.ts', "export { default as Card } from './Component.svelte';");
+		await put('src/routes/+page.ts', "import { Card as OrderCard } from '$public/ui/components/core/card'; export { OrderCard };");
 		const plan = await planMigration(root);
 		const content = plan.writes.get(path.join(root, 'src/routes/+page.ts')).toString();
-		assert.match(content, /default as OrderCard/);
-		assert.match(content, /Widgets\/Card\/Component.svelte/);
+		assert.match(content, /Card as OrderCard/);
+		assert.match(content, /Components\/Core\/Card/);
 	}));
 
 test('archives all colliding files without picking a winner', async () =>
 	fixture(async (root, put) => {
-		await put('src/app/shared-kernel/layers/domain/order/model/Order.ts', 'export interface IOtherOrder { name: string }');
+		await put('src/app/public-/layers/domain/order/resources/Order.ts', 'export interface IOtherOrder { name: string }');
 		const plan = await planMigration(root);
-		const collisions = plan.moves.filter((m) => /model\/Order.ts$/.test(m.from));
+		const collisions = [...plan.writes.keys()].filter((file) =>
+			/\.backup\/(public|public-)\/layers\/domain\/order\/resources\/Order.ts$/.test(file)
+		);
 		assert.equal(collisions.length, 2);
-		assert(collisions.every((m) => m.to.includes('/.backup/')));
+		assert(!plan.removes.some((file) => /resources\/Order.ts$/.test(file)));
 		assert(plan.issues.some((i) => i.reason.includes('Target collision')));
 	}));
 
 test('refuses a newly occupied target and leaves the legacy tree intact', async () =>
 	fixture(async (root, put) => {
 		const plan = await planMigration(root);
-		await put('src/app/Contexts/Order/Domain/Entities/Order.ts', '// user code');
+		await put('src/app/Contexts/Public/Order/Domain/Resources/Order.ts', '// user code');
 		await assert.rejects(applyMigration(plan), /already exists|New source file since planning/);
-		assert.equal(await fs.readFile(path.join(root, 'src/app/Contexts/Order/Domain/Entities/Order.ts'), 'utf8'), '// user code');
+		assert.equal(await fs.readFile(path.join(root, 'src/app/Contexts/Public/Order/Domain/Resources/Order.ts'), 'utf8'), '// user code');
 		await fs.access(path.join(root, 'src/app/public'));
 	}));
 
@@ -234,9 +229,12 @@ test('normalization preserves getter spread semantics and duplicate keys', () =>
 test('preserves Sass partial imports and implicit namespaces after PascalCase renaming', async () =>
 	fixture(async (root, put) => {
 		await put('src/app/shared-kernel/ui/style/_filters.scss', '$gap: 1px;');
-		await put('src/app/public/ui/widgets/card/style.scss', "@use '$shared-kernel/ui/style/filters'; .card { padding: filters.$gap; }");
+		await put(
+			'src/app/public/ui/components/core/card/style.scss',
+			"@use '$shared-kernel/ui/style/filters'; .card { padding: filters.$gap; }"
+		);
 		const plan = await planMigration(root);
-		const style = plan.writes.get(path.join(root, 'src/app/Presentation/Public/Ui/Widgets/Card/Style.scss')).toString();
+		const style = plan.writes.get(path.join(root, 'src/app/Presentation/Public/Ui/Components/Core/Card/Style.scss')).toString();
 		assert.match(style, /Filters.scss' as filters/);
 		assert(plan.writes.has(path.join(root, 'src/app/Presentation/Shared/Ui/Style/Filters.scss')));
 	}));
@@ -247,7 +245,7 @@ test('restores originals if an output write fails', async () =>
 		const original = fs.writeFile;
 		let failed = false;
 		fs.writeFile = async (file, ...args) => {
-			if (!failed && file === path.join(root, 'src/app/Platform/Foundation/DI/ApplicationProvider.ts')) {
+			if (!failed && file === path.join(root, 'src/platform/Foundation/Datasource/Api.ts')) {
 				failed = true;
 				throw new Error('disk failure');
 			}
@@ -259,18 +257,55 @@ test('restores originals if an output write fails', async () =>
 			fs.writeFile = original;
 		}
 		assert(failed);
-		assert.equal(await fs.readFile(path.join(root, 'src/app/public/ui/widgets/card/style.scss'), 'utf8'), '.card { color: red }');
-		await assert.rejects(fs.access(path.join(root, 'src/app/Contexts/Order/Domain/Entities/Order.ts')));
+		assert.equal(await fs.readFile(path.join(root, 'src/app/public/ui/components/core/card/style.scss'), 'utf8'), '.card { color: red }');
+		await assert.rejects(fs.access(path.join(root, 'src/app/Contexts/Public/Order/Domain/Resources/Order.ts')));
 	}));
 
-test('merges multiline export barrels as statements, not individual lines', async () =>
+test('colliding multiline barrels are preserved separately rather than guessing merged public contracts', async () =>
 	fixture(async (root, put) => {
-		await put('src/app/public/layers/domain/order/model/index.ts', "export {\n type IOrder\n} from './Order';");
-		await put('src/app/shared-kernel/layers/domain/order/model/Other.ts', 'export interface IOther {}');
-		await put('src/app/shared-kernel/layers/domain/order/model/index.ts', "export {\n type IOther\n} from './Other';");
+		const first = "export {\n type IOrder\n} from './Order';";
+		const second = "export {\n type IOther\n} from './Other';";
+		await put('src/app/public/layers/domain/order/resources/index.ts', first);
+		await put('src/app/public-/layers/domain/order/resources/index.ts', second);
 		const plan = await planMigration(root);
-		const barrel = plan.writes.get(path.join(root, 'src/app/Contexts/Order/Domain/Entities/index.ts')).toString();
-		assert.match(barrel, /IOrder/);
-		assert.match(barrel, /IOther/);
-		assert.equal(ts.transpileModule(barrel, { reportDiagnostics: true }).diagnostics.length, 0);
+		assert.equal(plan.writes.get(path.join(root, 'src/app/.backup/public/layers/domain/order/resources/index.ts')).toString(), first);
+		assert.equal(plan.writes.get(path.join(root, 'src/app/.backup/public-/layers/domain/order/resources/index.ts')).toString(), second);
+		assert(!plan.writes.has(path.join(root, 'src/app/Contexts/Public/Order/Domain/Resources/index.ts')));
+	}));
+
+test('proven use-case contracts become constructor interfaces with scoped index registration', async () =>
+	fixture(async (root, put) => {
+		await put(
+			'src/app/public/layers/application/use-cases/OrderUseCases.ts',
+			`export interface IOrderUseCases { list(): number[] }
+export class OrderUseCases implements IOrderUseCases { constructor(public repo: unknown) {} list() { return [42]; } }`
+		);
+		await put(
+			'src/app/public/layers/presentation/order/OrderPresenter.ts',
+			`import {createPresenter} from '@azure-net/kit/delivery';
+import {PublicApplicationProvider} from '../../application/providers/ApplicationProvider';
+export const OrderPresenter = createPresenter('Order', () => {
+ const {Orders} = PublicApplicationProvider();
+ const list = () => Orders.list();
+ return {list};
+});`
+		);
+		await put(
+			'src/routes/presenter.ts',
+			"import {OrderPresenter} from '../app/public/layers/presentation/order/OrderPresenter'; export const use = OrderPresenter;"
+		);
+		const plan = await planMigration(root);
+		const generated = plan.writes.get(path.join(root, 'src/app/Presentation/Public/Scopes/Order/OrderPresenter.ts')).toString();
+		const index = plan.writes.get(path.join(root, 'src/app/Presentation/Public/Scopes/Order/index.ts')).toString();
+		assert.match(generated, /constructor\(Orders: IOrderUseCases\)/);
+		assert.doesNotMatch(generated, /ReturnType<typeof PublicApplicationProvider>|useOrderPresenter =/);
+		assert.match(index, /useOrderPresenter = RegisterProvider/);
+		assert.match(index, /lifecycle: 'scoped'/);
+		assert.match(plan.writes.get(path.join(root, 'src/routes/presenter.ts')).toString(), /#presentation\/Public\/Scopes\/Order"/);
+		const exports = {};
+		vm.runInNewContext(
+			ts.transpileModule(generated, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText,
+			{ exports }
+		);
+		assert.deepEqual(new exports.OrderPresenter({ list: () => [42] }).list(), [42]);
 	}));

@@ -1,7 +1,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import prompts from 'prompts';
-import { selectContext, toPascalCase } from '../../utils/contextUtils.js';
+import { selectContext } from './repositoryModuleShared.js';
+import { selectAggregate, getAggregatePath } from '../../utils/architecture.js';
+import { toPascalCase } from '../../utils/contextUtils.js';
 import { appendBarrelExports, updateIndexTs, writeIfNotExists } from '../../utils/fileUtils.js';
 
 const parseInterfaceNames = (rawValue: unknown): string[] =>
@@ -33,7 +35,7 @@ const createInterfaceContent = (name: string): string => `export interface ${nam
 `;
 
 const writeRootIndex = async (domainPath: string): Promise<void> => {
-	await appendBarrelExports(path.join(domainPath, 'index.ts'), ['./Entities', './Ports', './Enums']);
+	await appendBarrelExports(path.join(domainPath, 'index.ts'), ['./Resources', './DTO', './Ports', './Enums']);
 };
 
 const createInterfacesInLayer = async (layerPath: string, names: string[]): Promise<void> => {
@@ -47,7 +49,7 @@ const createInterfacesInLayer = async (layerPath: string, names: string[]): Prom
 };
 
 export default async function generateDomain(
-	options: { contextName?: string; entityName?: string } = {}
+	options: { contextName?: string; entityName?: string; aggregateName?: string } = {}
 ): Promise<{ contextName: string; domainName: string; domainPath: string } | null> {
 	let context: string | null = options.contextName ? String(options.contextName) : null;
 	if (!context) {
@@ -59,9 +61,13 @@ export default async function generateDomain(
 	}
 
 	context = toPascalCase(context);
-	const domainPath = path.join(process.cwd(), 'src/app/Contexts', context, 'Domain');
-	const modelPath = path.join(domainPath, 'Entities');
-	const portsPath = path.join(domainPath, 'Ports');
+	const aggregate = options.aggregateName ?? (await selectAggregate(context));
+	if (!aggregate) return null;
+	const domainPath = path.join(getAggregatePath(context, aggregate), 'Domain');
+	const modelPath = path.join(domainPath, 'Resources');
+	const portsPath = path.join(domainPath, 'DTO');
+	await fs.mkdir(path.join(domainPath, 'Ports'), { recursive: true });
+	await updateIndexTs(path.join(domainPath, 'Ports'));
 
 	await fs.mkdir(modelPath, { recursive: true });
 	await fs.mkdir(portsPath, { recursive: true });
@@ -69,7 +75,7 @@ export default async function generateDomain(
 	const { shouldCreateModels } = await prompts({
 		type: 'confirm',
 		name: 'shouldCreateModels',
-		message: 'Create entity interfaces?',
+		message: 'Create resource interfaces?',
 		initial: true
 	});
 
@@ -77,11 +83,12 @@ export default async function generateDomain(
 		const { modelNamesRaw } = await prompts({
 			type: 'text',
 			name: 'modelNamesRaw',
-			message: 'Entity interface names (comma separated, start with I):',
+			message: 'Resource interface names (ending in Resource) (comma separated, start with I):',
 			validate: validateInterfaceNames
 		});
 
 		const modelNames = parseInterfaceNames(modelNamesRaw);
+		if (modelNames.some((n) => !n.endsWith('Resource'))) throw new Error('Resource interfaces must end in Resource.');
 		await createInterfacesInLayer(modelPath, modelNames);
 	} else {
 		await updateIndexTs(modelPath);
@@ -90,7 +97,7 @@ export default async function generateDomain(
 	const { shouldCreatePorts } = await prompts({
 		type: 'confirm',
 		name: 'shouldCreatePorts',
-		message: 'Create port interfaces?',
+		message: 'Create DTO interfaces?',
 		initial: true
 	});
 
@@ -98,7 +105,7 @@ export default async function generateDomain(
 		const { portNamesRaw } = await prompts({
 			type: 'text',
 			name: 'portNamesRaw',
-			message: 'Port interface names (comma separated, start with I):',
+			message: 'DTO interface names (comma separated, start with I):',
 			validate: validateInterfaceNames
 		});
 
@@ -112,5 +119,5 @@ export default async function generateDomain(
 	await updateIndexTs(path.join(domainPath, 'Enums'));
 	await writeRootIndex(domainPath);
 	console.log(`✅ Domain generated: ${domainPath}`);
-	return { contextName: context, domainName: context, domainPath };
+	return { contextName: context, domainName: aggregate, domainPath };
 }

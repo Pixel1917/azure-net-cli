@@ -1,11 +1,14 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import prompts from 'prompts';
-import { selectContext as selectDiskContext, toCamelCase, toPascalCase } from '../../utils/contextUtils.js';
+import ts from 'typescript';
+import { getAggregatePath, getPlatformPath, selectAggregate, discoverContexts, ensureContextStructure } from '../../utils/architecture.js';
+export { selectAggregate };
+import { toCamelCase, toPascalCase } from '../../utils/contextUtils.js';
 import { updateIndexTs, writeIfNotExists } from '../../utils/fileUtils.js';
 
 type ContextConfig = { name: string; alias: string };
-type TypeLayer = 'Ports' | 'Entities' | 'Enums';
+type TypeLayer = 'Ports' | 'Resources' | 'DTO' | 'Entities' | 'Enums';
 type ResponseKind = 'domain' | 'primitive';
 type RepositoryMeta = {
 	className: string;
@@ -17,7 +20,7 @@ type RepositoryMeta = {
 type DomainType = { name: string; layer: TypeLayer; fileName?: string };
 type MethodTypeRef = { name: string; layer: TypeLayer };
 type MethodResponseRef = { kind: ResponseKind; type: string; layer: TypeLayer | null };
-type RepositoryMethod = {
+export type RepositoryMethod = {
 	name: string;
 	httpMethod: string;
 	route: string;
@@ -26,7 +29,7 @@ type RepositoryMethod = {
 	bodyType: MethodTypeRef | null;
 	pathParamType: string | null;
 };
-type DatasourceInfo = { name: string; importPath: string };
+export type DatasourceInfo = { name: string; importPath: string; interfaceName?: string };
 
 const HTTP_METHODS = ['get', 'post', 'put', 'delete', 'head', 'options', 'patch'];
 const MUTATION_METHODS = new Set(['put', 'patch', 'delete']);
@@ -119,21 +122,46 @@ export const getConfigState = async (): Promise<{ contexts: ContextConfig[]; sha
 	return { contexts, sharedAlias: '#platform', sharedContextName: 'Platform' };
 };
 
-export const selectContext = (message = 'Select context:'): Promise<string | null> => selectDiskContext(message);
+export const selectContext = async (message = 'Select context:'): Promise<string | null> => {
+	await ensureContextStructure('SharedKernel');
+	const names = (await discoverContexts()).filter((name) => name !== 'SharedKernel');
+	const { context } = await prompts({
+		type: 'select',
+		name: 'context',
+		message,
+		choices: [...names.map((name) => ({ title: name, value: name })), { title: 'Create new context', value: '__create__' }]
+	});
+	if (!context) return null;
+	if (context === 'SharedKernel') throw new Error('SharedKernel is not an aggregate context.');
+	if (context !== '__create__') return toPascalCase(context);
+	const { name } = await prompts({
+		type: 'text',
+		name: 'name',
+		message: 'Context name:',
+		validate: (value: string) => {
+			try {
+				return toPascalCase(value) && toPascalCase(value) !== 'SharedKernel' ? true : 'Choose a non-shared context name';
+			} catch (error) {
+				return (error as Error).message;
+			}
+		}
+	});
+	if (!name) return null;
+	if (toPascalCase(name) === 'SharedKernel') throw new Error('SharedKernel is not an aggregate context.');
+	return ensureContextStructure(name);
+};
 export const resolveContextAlias = (_contexts: ContextConfig[], contextName: string): string => '#contexts/' + toPascalCase(contextName);
-export const resolveRepositoriesPath = (contextName: string): string =>
-	path.join(process.cwd(), 'src/app/Contexts', toPascalCase(contextName), 'Infrastructure/Repositories');
+export const resolveRepositoriesPath = (contextName: string, aggregate = contextName): string =>
+	path.join(getAggregatePath(contextName, aggregate), 'Infrastructure/Repositories');
 export const resolveDatasourcesPath = (...compatibility: [contextName?: string]): string => {
 	void compatibility;
-	return path.join(process.cwd(), 'src/app/Platform/Foundation/Datasource');
+	return path.join(getPlatformPath(), 'Foundation/Datasource');
 };
 export const resolveSharedDatasourcesPath = async (): Promise<string> => resolveDatasourcesPath();
-export const resolveDomainRootPath = (contextName: string, ...compatibility: [domainName?: string]): string => {
-	void compatibility;
-	return path.join(process.cwd(), 'src/app/Contexts', toPascalCase(contextName), 'Domain');
-};
-export const resolveUseCasesPath = (contextName: string): string =>
-	path.join(process.cwd(), 'src/app/Contexts', toPascalCase(contextName), 'Application/UseCases');
+export const resolveDomainRootPath = (contextName: string, aggregate = contextName): string =>
+	path.join(getAggregatePath(contextName, aggregate), 'Domain');
+export const resolveUseCasesPath = (contextName: string, aggregate = contextName): string =>
+	path.join(getAggregatePath(contextName, aggregate), 'Application/UseCases');
 
 export const getAvailableTsNames = async (targetPath: string): Promise<string[]> => {
 	try {
@@ -146,25 +174,48 @@ export const getAvailableTsNames = async (targetPath: string): Promise<string[]>
 	}
 };
 
+export const resolveDatasource = async (name: string): Promise<DatasourceInfo> => {
+	const normalized = toPascalCase(name);
+	const file = path.join(resolveDatasourcesPath(), normalized + '.ts');
+	let text: string;
+	try {
+		text = await fs.readFile(file, 'utf8');
+	} catch {
+		throw new Error('Datasource file not found: ' + file + '. Create it with foundation datasource.');
+	}
+	const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+	const interfaceName = 'I' + normalized;
+	const exported = (node: ts.ClassDeclaration | ts.InterfaceDeclaration) =>
+		node.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
+	if (
+		!source.statements.some((n) => ts.isInterfaceDeclaration(n) && n.name.text === interfaceName && exported(n)) ||
+		!source.statements.some((n) => ts.isClassDeclaration(n) && n.name?.text === normalized && exported(n))
+	)
+		throw new Error('Datasource must export class ' + normalized + ' and interface ' + interfaceName + ': ' + file);
+	return { name: normalized, interfaceName, importPath: '#platform/Foundation/Datasource/' + normalized };
+};
+
 export const selectDatasource = async (...compatibility: [contextName?: string]): Promise<DatasourceInfo | null> => {
 	void compatibility;
-	const names = await getAvailableTsNames(await resolveSharedDatasourcesPath());
+	const names = (await getAvailableTsNames(await resolveSharedDatasourcesPath())).filter((name) => name.endsWith('Datasource'));
 	if (!names.length) {
-		console.error('No datasources found in Platform/Foundation/Datasource. Create a Foundation datasource first.');
+		console.error('No datasources found in platform/Foundation/Datasource. Create a Foundation datasource first.');
 		return null;
 	}
 	const { datasource } = await prompts({
 		type: 'select',
 		name: 'datasource',
 		message: 'Select Foundation datasource:',
-		choices: names.map((name) => ({ title: name, value: { name, importPath: '#platform/Foundation/Datasource' } })),
+		choices: names.map((name) => ({ title: name, value: name })),
 		initial: 0
 	});
-	return datasource ?? null;
+	if (!datasource) return null;
+	// Older programmatic callers may supply the selection descriptor.
+	return resolveDatasource(typeof datasource === 'string' ? datasource : datasource.name);
 };
 
 // Retained for callers using the old metadata shape; there is no domain-folder selector.
-export const selectDomain = async (contextName: string): Promise<string> => toPascalCase(contextName);
+export const selectDomain = selectAggregate;
 
 export const getDomainTypes = async (contextName: string, domainName?: string): Promise<DomainType[]> => {
 	const root = resolveDomainRootPath(contextName, domainName);
@@ -190,7 +241,7 @@ export const getDomainTypes = async (contextName: string, domainName?: string): 
 			}
 		}
 	};
-	for (const layer of ['Ports', 'Entities', 'Enums'] as const) await readLayer(layer);
+	for (const layer of ['Ports', 'Resources', 'DTO', 'Enums'] as const) await readLayer(layer);
 	return result;
 };
 
@@ -356,7 +407,7 @@ const getResponseTypeName = (method: RepositoryMethod): string => method.respons
 const getMethodParams = (method: RepositoryMethod): string => {
 	const params: string[] = [];
 	if (method.pathParamType) params.push(`pathParam: ${method.pathParamType}`);
-	if (method.queryType) params.push(`request: ${method.queryType.name}`);
+	if (method.queryType) params.push(`${method.bodyType ? 'queryParams' : 'request'}: ${method.queryType.name}`);
 	if (method.bodyType) params.push(`request: ${method.bodyType.name}`);
 	return params.join(', ');
 };
@@ -370,52 +421,12 @@ const getRequestMapping = (method: RepositoryMethod): { callbackParams: string; 
 		.replace(/\n/g, '\\n');
 	const routeWithPath = method.pathParamType ? `${escapedRoute}/\${pathParam}` : escapedRoute;
 
-	if (method.httpMethod === 'get') {
-		if (method.queryType) {
-			return {
-				callbackParams: '{ http, query }',
-				call: `http.get(\`${routeWithPath}\`, { searchParams: query.toSearchParams(request) })`
-			};
-		}
-
-		return {
-			callbackParams: '{ http }',
-			call: `http.get(\`${routeWithPath}\`)`
-		};
-	}
-
-	if (method.httpMethod === 'post') {
-		if (method.bodyType) {
-			return {
-				callbackParams: '{ http }',
-				call: `http.post(\`${routeWithPath}\`, { json: request })`
-			};
-		}
-
-		return {
-			callbackParams: '{ http }',
-			call: `http.post(\`${routeWithPath}\`)`
-		};
-	}
-
-	if (method.httpMethod === 'put' || method.httpMethod === 'patch' || method.httpMethod === 'delete') {
-		const callMethod = method.httpMethod;
-		if (method.bodyType) {
-			return {
-				callbackParams: '{ http }',
-				call: `http.${callMethod}(\`${routeWithPath}\`, { json: request })`
-			};
-		}
-
-		return {
-			callbackParams: '{ http }',
-			call: `http.${callMethod}(\`${routeWithPath}\`)`
-		};
-	}
-
+	const options: string[] = [];
+	if (method.queryType) options.push(`searchParams: query.toSearchParams(${method.bodyType ? 'queryParams' : 'request'})`);
+	if (method.bodyType) options.push('json: request');
 	return {
-		callbackParams: '{ http }',
-		call: `http.${method.httpMethod}(\`${routeWithPath}\`)`
+		callbackParams: method.queryType ? '{ http, query }' : '{ http }',
+		call: `http.${method.httpMethod}(\`${routeWithPath}\`${options.length ? ', { ' + options.join(', ') + ' }' : ''})`
 	};
 };
 
@@ -430,6 +441,7 @@ export const buildRepositoryMethodCode = (method: RepositoryMethod): string => {
 export const buildRepositoryContent = ({
 	meta,
 	contextAlias,
+	domainName,
 	datasource,
 	domainTypes = [],
 	methods
@@ -441,8 +453,9 @@ export const buildRepositoryContent = ({
 	datasource: DatasourceInfo;
 	methods: RepositoryMethod[];
 }): string => {
+	const aggregateAlias = contextAlias + '/' + domainName;
 	const importLines = [
-		`import type { ${meta.repositoryInterfaceName} } from '${contextAlias}/Domain/Ports/${toTypeFileName(meta.repositoryInterfaceName)}';`
+		`import type { ${meta.repositoryInterfaceName} } from '${aggregateAlias}/Domain/Ports/${toTypeFileName(meta.repositoryInterfaceName)}';`
 	];
 	const imported = new Set<string>();
 	for (const method of methods) {
@@ -452,7 +465,7 @@ export const buildRepositoryContent = ({
 				if (imported.has(type.name)) continue;
 				imported.add(type.name);
 				importLines.push(
-					`import type { ${type.name} } from '${contextAlias}/Domain/${type.layer}/${type.fileName ?? toTypeFileName(type.name)}';`
+					`import type { ${type.name} } from '${aggregateAlias}/Domain/${type.layer}/${type.fileName ?? toTypeFileName(type.name)}';`
 				);
 			}
 		}
@@ -465,15 +478,15 @@ export const buildRepositoryContent = ({
 			if (method.queryType) names.add(method.queryType.name);
 			if (method.bodyType) names.add(method.bodyType.name);
 		}
-		if (names.size) importLines.push(`import type { ${[...names].join(', ')} } from '${contextAlias}/Domain';`);
+		if (names.size) importLines.push(`import type { ${[...names].join(', ')} } from '${aggregateAlias}/Domain';`);
 	}
 	const methodsCode = methods.map((method) => buildRepositoryMethodCode(method)).join('\n\n');
 	const typeImportLine = importLines.join('\n') + '\n';
 
-	return `import { ${datasource.name} } from '${datasource.importPath}';
+	return `import type { ${datasource.interfaceName ?? 'I' + datasource.name} } from '${datasource.importPath}';
 ${typeImportLine}
 export class ${meta.className} implements ${meta.repositoryInterfaceName} {
-\tconstructor(private readonly datasource: ${datasource.name}) {}
+\tconstructor(private readonly datasource: ${datasource.interfaceName ?? 'I' + datasource.name}) {}
 
 ${methodsCode ? `${methodsCode}\n` : ''}
 }
@@ -522,7 +535,7 @@ export const writeRepositoryInterface = async ({
 	const created = await writeIfNotExists(path.join(portsPath, `${toTypeFileName(meta.repositoryInterfaceName)}.ts`), content);
 	if (!created) return false;
 	await updateIndexTs(portsPath);
-	await ensureDomainScaffold(contextName);
+	await ensureDomainScaffold(contextName, domainName);
 	return true;
 };
 
@@ -553,7 +566,7 @@ export const createUseCasesForRepository = async ({
 		(type) => type.name === meta.repositoryInterfaceName && type.layer === 'Ports'
 	);
 	const interfaceFileName = type?.fileName ?? toTypeFileName(meta.repositoryInterfaceName);
-	const interfacePath = path.join(resolveDomainRootPath(contextName), 'Ports', interfaceFileName + '.ts');
+	const interfacePath = path.join(resolveDomainRootPath(contextName, domainName), 'Ports', interfaceFileName + '.ts');
 
 	let interfaceContent = '';
 	try {
@@ -564,17 +577,24 @@ export const createUseCasesForRepository = async ({
 	}
 
 	const methods = parseRepositoryMethodsFromInterface(interfaceContent);
-	const useCasesPath = resolveUseCasesPath(contextName);
+	const useCasesPath = resolveUseCasesPath(contextName, domainName);
 	await fs.mkdir(useCasesPath, { recursive: true });
 
+	let dependencyName = meta.repositoryDependencyName;
+	while (methods.includes(dependencyName)) dependencyName += 'Repository';
 	const declares = methods.map((methodName) => `\tdeclare ${methodName}: ${meta.repositoryInterfaceName}['${methodName}'];`).join('\n');
 
+	const aggregateAlias = contextAlias + '/' + domainName;
 	const content = `import { ClassMirror } from '@azure-net/kit';
-import type { ${meta.repositoryInterfaceName} } from '${contextAlias}/Domain/Ports/${interfaceFileName}';
+import type { ${meta.repositoryInterfaceName} } from '${aggregateAlias}/Domain/Ports/${interfaceFileName}';
 
-export class ${meta.useCasesClassName} extends ClassMirror {
-\tconstructor(private ${meta.repositoryDependencyName}: ${meta.repositoryInterfaceName}) {
-\t\tsuper(${meta.repositoryDependencyName});
+export interface I${meta.useCasesClassName} {
+${methods.map((name) => `  ${name}: ${meta.repositoryInterfaceName}['${name}'];`).join('\n')}
+}
+
+export class ${meta.useCasesClassName} extends ClassMirror implements I${meta.useCasesClassName} {
+\tconstructor(private ${dependencyName}: ${meta.repositoryInterfaceName}) {
+\t\tsuper(${dependencyName});
 \t}
 
 ${declares ? `${declares}\n` : ''}
@@ -583,23 +603,25 @@ ${declares ? `${declares}\n` : ''}
 
 	const created = await writeIfNotExists(path.join(useCasesPath, `${meta.useCasesClassName}.ts`), content);
 	if (!created) return false;
-	await updateIndexTs(useCasesPath);
 	return true;
 };
 
 export const resolveDomainForRepository = async ({
 	contextName,
 	contextAlias,
+	aggregateName,
 	repositoryName
 }: {
 	contextName: string;
 	contextAlias: string;
+	aggregateName?: string;
 	repositoryName: string;
 }): Promise<string | null> => {
-	const repositoryPath = path.join(resolveRepositoriesPath(contextName), `${ensureRepositoryName(repositoryName)}.ts`);
+	void contextAlias;
+	const repositoryPath = path.join(resolveRepositoriesPath(contextName, aggregateName), `${ensureRepositoryName(repositoryName)}.ts`);
 	try {
 		const content = await fs.readFile(repositoryPath, 'utf-8');
-		return content.includes(`${contextAlias}/Domain`) ? toPascalCase(contextName) : null;
+		return content.includes('/Domain') ? (aggregateName ?? toPascalCase(contextName)) : null;
 	} catch {
 		return null;
 	}
@@ -618,31 +640,26 @@ export const promptMethodsBatch = async (domainTypes: DomainType[], count: numbe
 	return methods;
 };
 
-export const ensureDomainScaffold = async (contextName: string): Promise<void> => {
-	const root = resolveDomainRootPath(contextName);
-	for (const layer of ['Entities', 'Ports', 'Enums']) {
+export const ensureDomainScaffold = async (contextName: string, aggregate = contextName): Promise<void> => {
+	const root = resolveDomainRootPath(contextName, aggregate);
+	for (const layer of ['Resources', 'DTO', 'Ports', 'Enums']) {
 		const directory = path.join(root, layer);
 		await fs.mkdir(directory, { recursive: true });
 		await updateIndexTs(directory);
 	}
-	await writeIfNotExists(path.join(root, 'index.ts'), "export * from './Entities';\nexport * from './Ports';\nexport * from './Enums';\n");
+	await writeIfNotExists(
+		path.join(root, 'index.ts'),
+		"export * from './Resources';\nexport * from './DTO';\nexport * from './Ports';\nexport * from './Enums';\n"
+	);
 };
 
-export const printApplicationProviderWiring = (contextName: string, repositoryName: string, datasourceName: string): void => {
-	const meta = getRepositoryMeta(repositoryName);
-	const alias = resolveContextAlias([], contextName);
-	console.log('\nManually wire #platform/Foundation/DI/ApplicationProvider.ts before generating the presenter.');
-	console.log(`import { ${datasourceName} } from '#platform/Foundation/Datasource';
-import { ${meta.className} } from '${alias}/Infrastructure/Repositories';
-import { ${meta.useCasesClassName} } from '${alias}/Application/UseCases';
-
-// Merge into the existing ApplicationProvider configuration.
-register: () => {
- const repository = () => new ${meta.className}(new ${datasourceName}({ /* http, query */ }));
- return {
-  ${meta.useCasesClassName}: () => new ${meta.useCasesClassName}(repository()),
-  // Optional: expose the repository as a lazy factory too.
-  // ${meta.className}: repository,
- };
-}`);
+export const printApplicationProviderWiring = (context: string, repository: string, datasource: string, aggregate = context): void => {
+	const meta = getRepositoryMeta(repository);
+	console.log(`Wire #contexts/${context}/Composition.ts:
+import { ${meta.className} } from '#contexts/${context}/${aggregate}/Infrastructure/Repositories/${meta.className}';
+import { ${meta.useCasesClassName} } from '#contexts/${context}/${aggregate}/Application/UseCases/${meta.useCasesClassName}';
+// dependsOn: { HttpProvider }, register: ({ HttpProvider }) => ({
+// ${meta.useCasesClassName}: () => new ${meta.useCasesClassName}(new ${meta.className}(HttpProvider.${datasource}))
+// })
+`);
 };

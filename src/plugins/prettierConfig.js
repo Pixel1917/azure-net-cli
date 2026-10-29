@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-export default async function addLint(_options = {}) {
+export default async function prettierConfig(_options = {}) {
     // Retain compatibility with the existing --manager option without running a package manager.
     void _options;
     const cwd = process.cwd();

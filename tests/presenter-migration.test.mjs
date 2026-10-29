@@ -120,19 +120,24 @@ test('upgrades an already migrated architecture, rewrites consumers and does not
 			`import * as presenters from '#presentation/Admin/Scopes/Orders/OrdersPresenter'; export const load = () => presenters.OrdersPresenter().collection();`
 		);
 		const plan = await planMigration(root);
-		assert.equal(plan.moves.length, 0);
-		assert.equal(plan.issues.length, 0, JSON.stringify(plan.issues));
+		assert.equal(plan.moves.length, 3);
+		assert(
+			plan.issues.every((issue) => /IUseCases/.test(issue.reason)),
+			JSON.stringify(plan.issues)
+		);
 		assert.match(plan.writes.get(path.join(root, presenterFile)).toString(), /export class OrdersPresenter/);
-		assert.match(plan.writes.get(path.join(root, 'src/routes/+page.svelte')).toString(), /useOrdersPresenter as Presenter/);
+		assert.match(plan.writes.get(path.join(root, 'src/routes/+page.svelte')).toString(), /Orders as Presenter/);
 		assert.match(plan.writes.get(path.join(root, 'src/routes/+page.ts')).toString(), /presenters.useOrdersPresenter\(\)/);
 		assert.match(
 			plan.writes.get(path.join(root, 'src/app/Presentation/Admin/Scopes/Orders/index.ts')).toString(),
 			/useOrdersPresenter as Orders/
 		);
 		await applyMigration(plan);
-		assert.equal(await fs.readFile(path.join(root, 'src/app/Platform/Foundation/DI/index.ts'), 'utf8'), di);
+		assert.equal(await fs.readFile(path.join(root, 'src/platform/Foundation/DI/index.ts'), 'utf8'), di);
 		assert.doesNotMatch(await fs.readFile(path.join(root, 'azure-net.config.ts'), 'utf8'), /defaultPresenterFactory/);
-		await assert.rejects(planMigration(root), /Nothing to migrate/);
+		const repeat = await planMigration(root);
+		assert.equal(repeat.moves.length, 0);
+		await applyMigration(repeat);
 	} finally {
 		await fs.rm(root, { recursive: true, force: true });
 	}
@@ -265,7 +270,7 @@ test('generated custom dependency classes pass strict TypeScript checking', asyn
 		await fs.writeFile(
 			path.join(root, 'kit.d.ts'),
 			`declare module '@azure-net/kit/delivery' {
- export function RegisterProvider<T>(factory:()=>T,lifecycle:'scoped'):()=>T;
+ export function RegisterProvider<T>(factory:()=>T,options:{lifecycle:'scoped'}):()=>T;
  export function createAsyncResource<Res=never,Req=never,E=unknown>(handler:()=>Promise<Res>): {response:Res;error:E};
  export const createAsyncAction: typeof createAsyncResource;
  }`

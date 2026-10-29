@@ -1,11 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-interface AddLintOptions {
+interface PrettierConfigOptions {
 	manager?: 'pnpm' | 'npm' | 'yarn' | 'bun';
 }
 
-export default async function addLint(_options: AddLintOptions = {}): Promise<void> {
+export default async function prettierConfig(_options: PrettierConfigOptions = {}): Promise<void> {
 	// Retain compatibility with the existing --manager option without running a package manager.
 	void _options;
 	const cwd = process.cwd();

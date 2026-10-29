@@ -98,13 +98,15 @@ export interface PresenterDependencies {
 	keys: Set<string>;
 	helpers: Set<string>;
 }
+export type ServiceContract = { name: string; source: string };
 
 /** Preserve lexical behavior while moving instance creation and dependencies to RegisterProvider. */
 export function migratePresenterSource(
 	input: string,
 	file: string,
 	factories: Set<string>,
-	dependencies = new Map<string, PresenterDependencies>()
+	dependencies = new Map<string, PresenterDependencies>(),
+	serviceContracts = new Map<string, ServiceContract>()
 ) {
 	const source = ts.createSourceFile(file, input, ts.ScriptTarget.Latest, true);
 	const edits: Edit[] = [];
@@ -262,7 +264,12 @@ export function migratePresenterSource(
 					if (!ts.isIdentifier(entry.name) || entry.dotDotDotToken || entry.initializer)
 						throw new Error('Unsupported provider destructuring');
 					const key = (entry.propertyName ?? entry.name).getText(source).replace(/^['"]|['"]$/g, '');
-					parameters.push(`${entry.name.text}: ReturnType<typeof ${value.expression.text}>[${JSON.stringify(key)}]`);
+					const contract = serviceContracts.get(`${value.expression.text}.${key}`);
+					if (contract && !javascript) {
+						const alias = unique(contract.name);
+						dependencyImports.push(`import type { ${contract.name} as ${alias} } from ${JSON.stringify(contract.source)};`);
+						parameters.push(`${entry.name.text}: ${alias}`);
+					} else parameters.push(`${entry.name.text}: ReturnType<typeof ${value.expression.text}>[${JSON.stringify(key)}]`);
 					argumentsList.push(entry.name.text);
 					registrationArguments.push(entry.name.text);
 				}
@@ -282,7 +289,7 @@ export function migratePresenterSource(
 						: `\nset ${key}(value${javascript ? '' : `: ReturnType<typeof ${setup}>[${JSON.stringify(key)}]`}) { this.#state.${key} = value; }`)
 				);
 			});
-			const text = `function ${setup}(${parameterList})${callback.type ? ': ' + callback.type.getText(source) : ''} {\n${helperSetup.join('\n')}\n${body.map((stmt) => stmt.getText(source)).join('\n')}\n}\n\nexport class ${name} {\n#state${javascript ? '' : `: ReturnType<typeof ${setup}>`};\nconstructor(${parameterList}) { this.#state = ${setup}(${argumentsList.join(', ')}); }\n${members.join('\n')}\n}\n\nexport const use${name} = ${registrationName}(() => {\n${registrations.join('\n')}\nreturn new ${name}(${registrationArguments.join(', ')});\n}, 'scoped');`;
+			const text = `function ${setup}(${parameterList})${callback.type ? ': ' + callback.type.getText(source) : ''} {\n${helperSetup.join('\n')}\n${body.map((stmt) => stmt.getText(source)).join('\n')}\n}\n\nexport class ${name} {\n#state${javascript ? '' : `: ReturnType<typeof ${setup}>`};\nconstructor(${parameterList}) { this.#state = ${setup}(${argumentsList.join(', ')}); }\n${members.join('\n')}\n}\n\nexport const use${name} = ${registrationName}(() => {\n${registrations.join('\n')}\nreturn new ${name}(${registrationArguments.join(', ')});\n}, { lifecycle: 'scoped' });`;
 			if (needsDependencyImport && dependency)
 				dependencyImports.push(
 					`import ${runtimeDependencyImport ? '' : 'type '}{ ${dependency.exportName} as ${dependencyAlias} } from ${JSON.stringify(dependency.source)};`

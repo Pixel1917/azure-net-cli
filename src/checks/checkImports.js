@@ -12,7 +12,8 @@ export default async function checkImports() {
                     issues.push({ file, line: entry.line, message: `Import "${entry.source}" must not include .ts/.js extension` });
                 if (['export', 'dynamic'].includes(entry.kind))
                     continue;
-                const order = entry.kind === 'type' ? 1 : entry.kind === 'side-effect' ? 2 : 0;
+                const style = /\.(?:css|scss|sass|less|styl)(?:$|[?#])/.test(entry.source);
+                const order = style || entry.kind === 'side-effect' ? 2 : entry.kind === 'type' ? 1 : 0;
                 if (order < previous)
                     issues.push({
                         file,

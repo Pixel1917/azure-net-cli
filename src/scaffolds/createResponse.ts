@@ -9,12 +9,15 @@ const createResponseWithWrapperTemplate = (name: string): string => {
 	const interfaceName = `I${name}`;
 	return `import { ResponseBuilder } from '@azure-net/kit/infra';
 
-export interface ${interfaceName}<T> {
-\tdata: T;
+export interface ${interfaceName}<TData, TMeta = unknown> {
+\tdata: TData;
+\tmeta?: TMeta;
 }
 
-export class ${name}<TData = unknown, TMeta = unknown> extends ResponseBuilder<TData, TMeta, ${interfaceName}<TData>> {
-\tprotected unwrapData(data: ${interfaceName}<TData>): TData {
+export interface I${name}Result<TData = unknown, TMeta = unknown> extends Pick<ResponseBuilder<TData, TMeta, ${interfaceName}<TData, TMeta>>, keyof ResponseBuilder<TData, TMeta, ${interfaceName}<TData, TMeta>>> {}
+
+export class ${name}<TData = unknown, TMeta = unknown> extends ResponseBuilder<TData, TMeta, ${interfaceName}<TData, TMeta>> implements I${name}Result<TData, TMeta> {
+\tprotected unwrapData(data: ${interfaceName}<TData, TMeta>): TData {
 \t\treturn data.data;
 \t}
 }
@@ -23,7 +26,11 @@ export class ${name}<TData = unknown, TMeta = unknown> extends ResponseBuilder<T
 
 const createResponseSimpleTemplate = (name: string): string => `import { ResponseBuilder } from '@azure-net/kit/infra';
 
-export class ${name}<TData = unknown, TMeta = unknown> extends ResponseBuilder<TData, TMeta> {}
+export type I${name}<TData> = TData;
+
+export interface I${name}Result<TData = unknown, TMeta = unknown> extends Pick<ResponseBuilder<TData, TMeta>, keyof ResponseBuilder<TData, TMeta>> {}
+
+export class ${name}<TData = unknown, TMeta = unknown> extends ResponseBuilder<TData, TMeta> implements I${name}Result<TData, TMeta> {}
 `;
 
 const ensureResponseName = (rawName: string): string => {

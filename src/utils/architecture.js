@@ -1,22 +1,23 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import prompts from 'prompts';
-import { writeIfNotExists } from './fileUtils.js';
 export const SHARED_CONTEXT = 'SharedKernel';
 export const SHARED_WORKSPACE = 'Shared';
 export const ARCHITECTURE_ALIASES = {
     '#contexts': './src/app/Contexts',
     '#presentation': './src/app/Presentation',
-    '#platform': './src/app/Platform'
+    '#platform': './src/platform'
 };
 export const CONTEXT_DIRS = [
-    'Domain/Entities',
+    'Domain/Resources',
+    'Domain/DTO',
     'Domain/Ports',
     'Domain/Enums',
     'Application/UseCases',
     'Infrastructure/Repositories'
 ];
 export const PRESENTATION_DIRS = ['Ui', 'Scopes', 'Shell'];
+export const UI_DIRS = ['Actions', 'Style', 'Components/Scopes', 'Components/Composite', 'Components/Page', 'Components/Core'];
 export function normalizePascalName(value) {
     const raw = value.trim();
     if (!/^[A-Za-z][A-Za-z0-9 _-]*$/.test(raw))
@@ -30,7 +31,8 @@ export const getAppPath = (cwd = process.cwd()) => path.join(cwd, 'src', 'app');
 export const getContextsPath = (cwd = process.cwd()) => path.join(getAppPath(cwd), 'Contexts');
 export const getContextPath = (context, cwd = process.cwd()) => path.join(getContextsPath(cwd), normalizePascalName(context));
 export const getPresentationPath = (workspace, cwd = process.cwd()) => workspace ? path.join(getAppPath(cwd), 'Presentation', normalizePascalName(workspace)) : path.join(getAppPath(cwd), 'Presentation');
-export const getPlatformPath = (cwd = process.cwd()) => path.join(getAppPath(cwd), 'Platform');
+export const getPlatformPath = (cwd = process.cwd()) => path.join(cwd, 'src', 'platform');
+export const getAggregatePath = (context, aggregate, cwd = process.cwd()) => path.join(getContextPath(context, cwd), normalizePascalName(aggregate));
 export const getContextImportPath = (context) => `#contexts/${normalizePascalName(context)}`;
 export const getPresentationImportPath = (workspace) => workspace ? `#presentation/${normalizePascalName(workspace)}` : '#presentation';
 async function directories(root) {
@@ -50,14 +52,54 @@ export const discoverContexts = async (cwd = process.cwd()) => (await directorie
 export const discoverPresentationWorkspaces = async (cwd = process.cwd()) => (await directories(getPresentationPath(undefined, cwd))).filter((name) => !PRESENTATION_DIRS.includes(name) && /^[A-Z][A-Za-z0-9]*$/.test(name));
 export async function ensureContextStructure(context, cwd = process.cwd()) {
     const name = normalizePascalName(context);
-    for (const dir of CONTEXT_DIRS) {
-        await writeIfNotExists(path.join(getContextPath(name, cwd), dir, 'index.ts'), 'export {};\n');
-    }
+    await fs.mkdir(getContextPath(name, cwd), { recursive: true });
+    if (name === SHARED_CONTEXT)
+        for (const dir of ['Contracts', 'Domain'])
+            await fs.mkdir(path.join(getContextPath(name, cwd), dir), { recursive: true });
     return name;
+}
+export async function ensureAggregateStructure(context, aggregate, cwd = process.cwd()) {
+    if (context === SHARED_CONTEXT)
+        throw new Error('SharedKernel contains shared contracts/domain, not application aggregates.');
+    await ensureContextStructure(context, cwd);
+    const name = normalizePascalName(aggregate);
+    for (const dir of CONTEXT_DIRS)
+        await fs.mkdir(path.join(getAggregatePath(context, name, cwd), dir), { recursive: true });
+    return name;
+}
+export async function selectAggregate(context) {
+    const names = (await directories(getContextPath(context))).filter((name) => /^[A-Z][A-Za-z0-9]*$/.test(name));
+    const { aggregate } = await prompts({
+        type: 'select',
+        name: 'aggregate',
+        message: 'Select aggregate:',
+        choices: [...names.map((name) => ({ title: name, value: name })), { title: 'Create new aggregate', value: '__create__' }]
+    });
+    if (!aggregate)
+        return null;
+    if (aggregate !== '__create__')
+        return String(aggregate);
+    const { name } = await prompts({
+        type: 'text',
+        name: 'name',
+        message: 'Aggregate name:',
+        validate: (value) => {
+            try {
+                normalizePascalName(value);
+                return true;
+            }
+            catch (error) {
+                return error.message;
+            }
+        }
+    });
+    return name ? ensureAggregateStructure(context, String(name)) : null;
 }
 export async function ensurePresentationStructure(workspace, cwd = process.cwd()) {
     for (const dir of PRESENTATION_DIRS)
         await fs.mkdir(path.join(getPresentationPath(workspace, cwd), dir), { recursive: true });
+    for (const dir of UI_DIRS)
+        await fs.mkdir(path.join(getPresentationPath(workspace, cwd), 'Ui', dir), { recursive: true });
 }
 export async function selectContext(message = 'Select context:') {
     await ensureContextStructure(SHARED_CONTEXT);

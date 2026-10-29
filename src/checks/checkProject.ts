@@ -1,4 +1,6 @@
 import { execSync } from 'node:child_process';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { loadUserConfig } from '../utils/loadConfig.js';
 import checkInternal from './checkInternal.js';
 
@@ -33,7 +35,11 @@ export default async function checkProject(): Promise<void> {
 	}
 
 	try {
-		runScript(manager, 'format');
+		const pkg = JSON.parse(await fs.readFile(path.join(process.cwd(), 'package.json'), 'utf8'));
+		// Pre-commit must not implicitly run the commonly mutating `format` script.
+		// Projects opting into format:check must keep that script read-only, like lint/check.
+		if (typeof pkg.scripts?.['format:check'] === 'string' && pkg.scripts['format:check'].trim()) runScript(manager, 'format:check');
+		else console.log('Skipping formatting: no format:check script. Add a read-only format:check script (for example, prettier --check .).');
 		await runInternalChecks();
 		runScript(manager, 'lint');
 		runScript(manager, 'check');

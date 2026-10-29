@@ -3,9 +3,31 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { mergeKitViteConfig, formatConfig, configureKitProject, readStaticAliases } from '../src/utils/viteConfig.js';
-import { registerDatasource } from '../src/scaffolds/registerDatasource.js';
-import installFresh from '../src/install/installFresh.js';
+import { registerHooks } from 'node:module';
+import ts from 'typescript';
+// Test current sources without building or modifying generated JavaScript.
+registerHooks({
+	resolve(specifier, context, next) {
+		if (specifier.startsWith('.') && specifier.endsWith('.js') && context.parentURL?.includes('/src/')) {
+			return { url: new URL(specifier.replace(/\.js$/, '.ts'), context.parentURL).href, shortCircuit: true };
+		}
+		return next(specifier, context);
+	},
+	load(url, context, next) {
+		const result = next(url, context);
+		if (!url.endsWith('.ts')) return result;
+		return {
+			format: 'module',
+			source: ts.transpileModule(String(result.source), {
+				compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext }
+			}).outputText,
+			shortCircuit: true
+		};
+	}
+});
+const { mergeKitViteConfig, formatConfig, configureKitProject, readStaticAliases } = await import('../src/utils/viteConfig.ts');
+const { registerDatasource } = await import('../src/scaffolds/registerDatasource.ts');
+const { default: installFresh } = await import('../src/install/installFresh.ts');
 import prompts from 'prompts';
 const aliases = { '#contexts': './src/app/Contexts' };
 const vite =
@@ -91,19 +113,19 @@ test('legacy file is backed up, removed and not recreated; respects project Pret
 		assert.equal(await fs.readFile('vite.config.ts', 'utf8'), output);
 	}));
 
-test('fresh install registers datasource inside ApplicationProvider and never offers another provider', () =>
+test('fresh install optionally creates HttpProvider and preserves existing registrations', () =>
 	fixture(async () => {
 		await fs.writeFile('vite.config.ts', vite);
-		// Commit tools, schema, response, datasource, name, translations.
-		prompts.inject([false, false, false, true, 'Api', false]);
+		// Cookie, response, datasource, name, provider, schema, error handler, translations, prettier, hooks.
+		prompts.inject([false, false, true, 'Api', true, false, false, false, false, false]);
 		await installFresh();
-		const dir = 'src/app/Platform/Foundation/DI';
-		const output = await fs.readFile(`${dir}/ApplicationProvider.ts`, 'utf8');
-		assert.match(output, /const datasource = new ApiDatasource\(\{\}\)/);
-		assert.match(output, /register: \(\) => \{/);
-		assert.deepEqual((await fs.readdir(dir)).sort(), ['ApplicationProvider.ts', 'index.ts']);
-		await fs.writeFile(`${dir}/ApplicationProvider.ts`, '// user-owned DI');
+		const dir = 'src/platform/Foundation/Provider';
+		const output = await fs.readFile(`${dir}/HttpProvider.ts`, 'utf8');
+		assert.match(output, /ApiDatasource: \(\) => new ApiDatasource/);
+		assert.match(output, /CreateServiceContainer/);
+		assert.deepEqual((await fs.readdir(dir)).sort(), ['HttpProvider.ts', 'index.ts']);
+		await fs.writeFile(`${dir}/HttpProvider.ts`, '// user-owned DI');
 		await registerDatasource('AnotherDatasource');
-		assert.equal(await fs.readFile(`${dir}/ApplicationProvider.ts`, 'utf8'), '// user-owned DI');
+		assert.equal(await fs.readFile(`${dir}/HttpProvider.ts`, 'utf8'), '// user-owned DI');
 		await assert.rejects(fs.access('svelte.config.js'));
 	}));

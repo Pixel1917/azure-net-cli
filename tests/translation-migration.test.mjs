@@ -51,3 +51,18 @@ test('translation helper shadowed function names are not replaced', () => {
 	assert.deepEqual(result.issues, []);
 	assert.match(result.updates.get('/src/Helper.ts'), /function other\(initializeClient\)\{return initializeClient\(\);\}/);
 });
+
+test('uses a TranslationManager instance while retaining options and direct t consumers', () => {
+	const result = migrateTranslationsSources(sources(), resolve);
+	assert.match(result.updates.get('/src/Translations.ts'), /TranslationManager as createTranslations/);
+	assert.match(result.updates.get('/src/Translations.ts'), /new createTranslations\(\{messages,initLang:'en'\}\)/);
+	assert.doesNotMatch(result.updates.get('/src/Helper.ts'), /TranslationManager\(\)/);
+});
+
+test('escaped manager references prevent partial facade and lifecycle updates', () => {
+	const input = sources();
+	input.set('/src/Helper.ts', input.get('/src/Helper.ts') + '\nexport const forwarded = TranslationManager;');
+	const result = migrateTranslationsSources(input, resolve);
+	assert.equal(result.updates.size, 0);
+	assert(result.issues.some((issue) => /escapes/.test(issue.reason)));
+});

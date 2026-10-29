@@ -4,3 +4,7 @@ export { default as createSchemaRule } from './createSchemaRule.js';
 export { default as createResponse } from './createResponse.js';
 export { default as createDatasource } from './createDatasource.js';
 export { default as createProgram } from './createProgram.js';
+export { default as createBootstrap } from './createBootstrap.js';
+export { default as createCookieInstance } from './createCookieInstance.js';
+export { default as createMiddleware } from './createMiddleware.js';
+export { default as createErrorHandler } from './createErrorHandler.js';

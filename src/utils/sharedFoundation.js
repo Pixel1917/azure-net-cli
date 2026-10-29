@@ -5,7 +5,7 @@ export const SHARED_ESSENTIALS_DIR_NAME = 'Platform';
 const constructNames = {
     datasource: 'Datasource',
     presenter: 'Presenter',
-    provider: 'DI',
+    provider: 'Provider',
     response: 'Response',
     schema: 'Schema'
 };

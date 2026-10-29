@@ -1,5 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import ts from 'typescript';
+import { location, parseSource, report } from './architecture.js';
 const TARGET_EXTENSIONS = new Set(['.ts', '.js', '.svelte']);
 const IGNORED_DIRS = new Set(['.backup', 'node_modules', 'dist', '.svelte-kit', '.git']);
 const CREATE_FACTORY_PATTERN = '(?:export\\s+)?(?:const|let|var)\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*=\\s*createPresenterFactory\\s*\\(';
@@ -139,10 +141,37 @@ export default async function checkPresenterNames() {
     }
     const files = await listSourceFiles(srcPath);
     const fileContents = new Map();
+    const classIssues = [];
+    let classCount = 0;
     for (const filePath of files) {
         const content = await fs.readFile(filePath, 'utf-8');
         fileContents.set(filePath, content);
+        const parts = location(filePath);
+        if (parts[0] !== 'Presentation' || parts[2] !== 'Scopes')
+            continue;
+        if (parts.slice(3, -1).some((part) => /^(?:stores?|schemas?)$/i.test(part)))
+            continue;
+        const basename = path.basename(filePath).replace(/(?:\.(?:svelte|d))?\.[^.]+$/, '');
+        if (/(?:Store|Schema)$/.test(basename))
+            continue;
+        const source = parseSource(content, filePath);
+        const visit = (node) => {
+            if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+                classCount += 1;
+                const line = source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
+                if (!node.name || !/^[A-Z][A-Za-z0-9]*Presenter$/.test(node.name.text))
+                    classIssues.push({ file: filePath, line, message: 'Scope presenter class name must end with Presenter' });
+                if (!/^[A-Z][A-Za-z0-9]*Presenter$/.test(basename))
+                    classIssues.push({ file: filePath, line, message: 'Scope presenter file name must end with Presenter' });
+                // Nested implementation classes are not separate scope presenters.
+                return;
+            }
+            ts.forEachChild(node, visit);
+        };
+        visit(source);
     }
+    report('Presenter classes', classIssues);
+    console.log(`Analyzed ${classCount} scope presenter classes.`);
     const globalFactoryNames = new Set();
     for (const content of fileContents.values()) {
         for (const name of extractFactoryNamesFromContent(content)) {
@@ -154,7 +183,8 @@ export default async function checkPresenterNames() {
         occurrences.push(...collectPresenterOccurrences(content, filePath, globalFactoryNames));
     }
     if (!occurrences.length) {
-        console.log('✅ No presenter declarations found.');
+        if (!classCount)
+            console.log('No scope presenter classes or legacy presenter registrations found.');
         return;
     }
     const grouped = new Map();

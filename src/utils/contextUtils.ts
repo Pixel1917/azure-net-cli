@@ -1,6 +1,5 @@
 import fs from 'node:fs/promises';
-import path from 'node:path';
-import { getPlatformPath, normalizePascalName } from './architecture.js';
+import { normalizePascalName } from './architecture.js';
 export {
 	getContextPath,
 	selectContext,
@@ -15,16 +14,6 @@ export async function getAvailableFiles(dir: string, pattern = '.ts'): Promise<s
 		return (await fs.readdir(dir))
 			.filter((file) => file.endsWith(pattern) && file !== 'index.ts')
 			.map((file) => file.slice(0, -pattern.length));
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
-		throw error;
-	}
-}
-
-export async function getApplicationProviderServices(): Promise<string[]> {
-	try {
-		const content = await fs.readFile(path.join(getPlatformPath(), 'Foundation/DI/ApplicationProvider.ts'), 'utf8');
-		return Array.from(content.matchAll(/(\w+Service):\s*\(/g), (match) => match[1]!);
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
 		throw error;

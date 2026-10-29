@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import prompts from 'prompts';
 import ts from 'typescript';
-import { selectContext } from './repositoryModuleShared.js';
+import { selectAggregate, resolveDomainRootPath, selectContext } from './repositoryModuleShared.js';
 const isValidIdentifier = (value) => /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(value);
 const toPropertyName = (key) => (isValidIdentifier(key) ? key : JSON.stringify(key));
 const getIndent = (level) => '\t'.repeat(level);
@@ -131,8 +131,8 @@ const extractExistingRootKeys = (body) => {
         ? [member.name.text]
         : []) ?? []);
 };
-const listModelFiles = async (contextName) => {
-    const modelRoot = path.join(process.cwd(), 'src', 'app', 'Contexts', contextName, 'Domain', 'Entities');
+const listModelFiles = async (contextName, aggregate) => {
+    const modelRoot = path.join(resolveDomainRootPath(contextName, aggregate), 'Resources');
     try {
         const files = await fs.readdir(modelRoot);
         return files
@@ -152,7 +152,10 @@ export default async function generateTypesJson() {
         process.exitCode = 1;
         return;
     }
-    const models = await listModelFiles(contextName);
+    const aggregate = await selectAggregate(contextName);
+    if (!aggregate)
+        return;
+    const models = await listModelFiles(contextName, aggregate);
     if (!models.length) {
         console.error(`❌ No model files found in context "${contextName}".`);
         process.exitCode = 1;

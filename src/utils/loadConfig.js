@@ -32,10 +32,12 @@ export async function loadUserConfig(cwd = process.cwd()) {
         if (!config || typeof config !== 'object' || Array.isArray(config))
             throw new Error('Expected a default-exported configuration object.');
         const parsed = config;
-        if (parsed.presentationWorkspaces !== undefined &&
-            (!Array.isArray(parsed.presentationWorkspaces) ||
-                parsed.presentationWorkspaces.some((name) => typeof name !== 'string' || !/^[A-Za-z][A-Za-z0-9 _-]*$/.test(name.trim()))))
-            throw new Error('presentationWorkspaces must be an array of valid workspace names.');
+        for (const key of ['appBoundaries', 'presentationWorkspaces']) {
+            const names = parsed[key];
+            if (names !== undefined &&
+                (!Array.isArray(names) || names.some((name) => typeof name !== 'string' || !/^[A-Z][A-Za-z0-9]*$/.test(name))))
+                throw new Error(`${key} must be an array of PascalCase boundary names.`);
+        }
         if (parsed.runChecksBeforePush !== undefined && typeof parsed.runChecksBeforePush !== 'boolean')
             throw new Error('runChecksBeforePush must be a boolean.');
         return parsed;
@@ -58,7 +60,9 @@ export async function initializeConfigDefaults(cwd = process.cwd()) {
         return;
     const resolved = resolveConfigFile(cwd);
     if (!resolved.exists) {
-        await fs.writeFile(resolved.filepath, 'export default {\n\trunChecksBeforePush: true\n};\n', { flag: 'wx' });
+        await fs.writeFile(resolved.filepath, "export default {\n\tappBoundaries: ['Public'],\n\trunChecksBeforePush: true\n};\n", {
+            flag: 'wx'
+        });
         return;
     }
     const content = await fs.readFile(resolved.filepath, 'utf8');

@@ -1,16 +1,19 @@
+import { migrateCurrentApis } from './currentApis.js';
+import { migrateCompositionSource } from './composition.js';
+import { migratePresenterLayout } from './presenterLayout.js';
 import { migrateTranslationsSources } from './translations.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import ts from 'typescript';
 import prompts from 'prompts';
-import { CONTEXT_DIRS, normalizePascalName } from '../utils/architecture.js';
+import { normalizePascalName } from '../utils/architecture.js';
 import { VITE_CONFIGS } from '../utils/viteConfig.js';
-import { mergePackageImports, resolvePackageImport } from '../utils/packageImports.js';
-import { flattenConfigLiterals } from '../utils/flattenConfig.js';
+import { PACKAGE_IMPORTS, resolvePackageImport } from '../utils/packageImports.js';
+import { migrateConfig } from './config.js';
 import { parseSource } from '../checks/architecture.js';
 import { inspectFactories, replaceFactory, type FactoryDefinition } from './presenterFactories.js';
-import { migrateAsyncHelpers, migratePresenterSource, type PresenterDependencies } from './presenters.js';
+import { migrateAsyncHelpers, migratePresenterSource, type PresenterDependencies, type ServiceContract } from './presenters.js';
 
 export type MigrationIssue = { file: string; reason: string };
 export type MigrationPlan = {
@@ -25,8 +28,41 @@ export type MigrationPlan = {
 const slash = (s: string): string => s.split(path.sep).join('/');
 const textFile = /\.(?:[cm]?[jt]sx?|svelte|css|scss|sass|less|json|html|svg)$/;
 const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed });
-const unwrap = (n: ts.Expression): ts.Expression => (ts.isParenthesizedExpression(n) ? unwrap(n.expression) : n);
 const propName = (n: ts.Node | undefined): string | undefined => (n && (ts.isIdentifier(n) || ts.isStringLiteral(n)) ? n.text : undefined);
+
+const platformTargets = new Set(
+	['', '/index.ts', '/*', '/*.ts', '/*/index.ts'].flatMap((suffix) => ['./src/app/Platform', './src/platform'].map((base) => base + suffix))
+);
+function knownPlatformImport(value: unknown): boolean {
+	if (typeof value === 'string') return platformTargets.has(value);
+	if (Array.isArray(value)) return value.length > 0 && value.every(knownPlatformImport);
+	return !!value && typeof value === 'object' && Object.keys(value).length > 0 && Object.values(value).every(knownPlatformImport);
+}
+function knownArchitectureImport(key: string, value: unknown): boolean {
+	const base = key.startsWith('#contexts') ? './src/app/Contexts' : './src/app/Presentation';
+	if (typeof value === 'string') return ['', '/index.ts', '/*', '/*.ts', '/*/index.ts'].some((suffix) => value === base + suffix);
+	if (Array.isArray(value)) return value.length > 0 && value.every((item) => knownArchitectureImport(key, item));
+	return (
+		!!value &&
+		typeof value === 'object' &&
+		Object.keys(value).length > 0 &&
+		Object.values(value).every((item) => knownArchitectureImport(key, item))
+	);
+}
+async function assertSafeTarget(root: string, file: string): Promise<void> {
+	const relative = path.relative(root, file);
+	if (relative.startsWith('..' + path.sep) || relative === '..' || path.isAbsolute(relative))
+		throw new Error(`Migration target outside project: ${file}`);
+	let current = root;
+	for (const part of ['', ...relative.split(path.sep)]) {
+		current = path.join(current, part);
+		try {
+			if ((await fs.lstat(current)).isSymbolicLink()) throw new Error(`Migration refuses symbolic link: ${current}`);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+		}
+	}
+}
 
 async function files(root: string): Promise<string[]> {
 	const out: string[] = [];
@@ -52,6 +88,7 @@ function partsPath(parts: string[]): string {
 export async function planMigration(root = process.cwd()): Promise<MigrationPlan> {
 	root = path.resolve(root);
 	const app = path.join(root, 'src/app');
+	const platform = path.join(root, 'src/platform');
 	const originals = new Map<string, Buffer>();
 	for (const file of await files(path.join(root, 'src'))) originals.set(file, await fs.readFile(file));
 	for (const name of [
@@ -80,11 +117,14 @@ export async function planMigration(root = process.cwd()): Promise<MigrationPlan
 		}
 	};
 	const mapping = new Map<string, string>();
+	const compositions = new Map<string, string>();
 	const workspaces = new Set<string>();
-	const contexts = new Set<string>(['SharedKernel']);
 	const aliases = new Map<string, string>([
 		['$lib', path.join(root, 'src/lib')],
-		['$program', path.join(root, 'src/program.ts')]
+		['$program', path.join(root, 'src/program.ts')],
+		['#platform', platform],
+		['#contexts', path.join(app, 'Contexts')],
+		['#presentation', path.join(app, 'Presentation')]
 	]);
 	const oldRoots = new Set<string>();
 	for (const file of originals.keys()) {
@@ -121,8 +161,13 @@ export async function planMigration(root = process.cwd()): Promise<MigrationPlan
 		const clean = specifier[0]! + specifier.slice(1).split(/[?#]/)[0]!;
 		let base: string | undefined;
 		if (clean.startsWith('.')) base = path.resolve(path.dirname(from), clean);
-		else if (clean.startsWith('#')) base = resolvePackageImport(packageImports, clean, root) ?? undefined;
-		else
+		else if (clean.startsWith('#')) {
+			base = resolvePackageImport(packageImports, clean, root) ?? undefined;
+			if (!base)
+				for (const [alias, target] of aliases) {
+					if (clean === alias || clean.startsWith(alias + '/')) base = path.join(target, clean.slice(alias.length));
+				}
+		} else
 			for (const [alias, target] of [...aliases].sort((a, b) => b[0].length - a[0].length)) {
 				if (clean === alias || clean.startsWith(alias + '/')) {
 					base = path.join(target, clean.slice(alias.length));
@@ -160,25 +205,61 @@ export async function planMigration(root = process.cwd()): Promise<MigrationPlan
 	for (const file of originals.keys()) {
 		const rel = slash(path.relative(app, file));
 		const p = rel.split('/');
+		if (p[0] === 'Contexts' && p[1] && p[1] !== 'SharedKernel' && /^Composition\.[jt]s$/.test(p[2] ?? '')) {
+			const converted = migrateCompositionSource(originals.get(file)!.toString(), p[1]);
+			if (converted) compositions.set(file, converted);
+		}
+		if (p[0] === 'Platform') {
+			mapping.set(file, path.join(platform, ...p.slice(1)));
+			continue;
+		}
+		if (p[0] === 'Contexts' && p[1] !== 'SharedKernel' && ['Domain', 'Application', 'Infrastructure'].includes(p[2]!)) {
+			// The earlier migrator discarded the original context/aggregate distinction.
+			backup(file, 'Previous flat context layout: choose the aggregate and context manually; source retained.');
+			continue;
+		}
 		if (!oldRoots.has(p[0]!)) continue;
 		const area = p[0]!;
-		const workspace = /^(shared-kernel|shared)$/i.test(area) ? 'Shared' : normalizePascalName(area);
+		let workspace: string;
+		try {
+			workspace = /^(shared-kernel|shared)$/i.test(area) ? 'Shared' : normalizePascalName(area);
+		} catch {
+			mapping.set(file, backup(file, 'Invalid legacy area name; source retained.'));
+			continue;
+		}
 		let dest: string | undefined;
 		try {
 			if (p[1] === 'ui') {
 				workspaces.add(workspace);
-				dest = `Presentation/${workspace}/Ui/${partsPath(p.slice(2))}`;
+				const category = p[2]?.toLowerCase();
+				if (['actions', 'style', 'components'].includes(category ?? '')) dest = `Presentation/${workspace}/Ui/${partsPath(p.slice(2))}`;
+				else issue(file, 'UI category is ambiguous: choose Components/Scopes, Composite, Page or Core manually.');
 			} else if (p[1] === 'layers' && p[2] === 'presentation') {
 				workspaces.add(workspace);
 				dest = `Presentation/${workspace}/Scopes/${partsPath(p.slice(3))}`;
 			} else if (p[1] === 'layers' && p[2] === 'domain' && p.length >= 5) {
-				const context = normalizePascalName(p[3]!);
-				contexts.add(context);
-				const folders: Record<string, string> = { model: 'Entities', models: 'Entities', ports: 'Ports', enums: 'Enums', enum: 'Enums' };
+				const context = /^(shared-kernel|shared)$/i.test(area) ? 'SharedKernel' : normalizePascalName(area);
+				const aggregate = normalizePascalName(p[3]!);
+				const folders: Record<string, string> = { resources: 'Resources', dto: 'DTO', ports: 'Ports', enums: 'Enums', enum: 'Enums' };
 				const rest = [...p.slice(4)];
 				if (folders[rest[0]!]) rest[0] = folders[rest[0]!]!;
-				dest = `Contexts/${context}/Domain/${partsPath(rest)}`;
-				if (/\/I[A-Z][^/]*\.ts$/.test(dest)) dest = dest.replace(/\/I([A-Z][^/]*)\.ts$/, '/$1.ts');
+				if (['model', 'models'].includes(rest[0]!)) {
+					issue(file, 'Domain model classification is ambiguous: choose Resources, DTO or another domain type manually.');
+				} else
+					dest =
+						context === 'SharedKernel'
+							? `Contexts/SharedKernel/Domain/${aggregate}/${partsPath(rest)}`
+							: `Contexts/${context}/${aggregate}/Domain/${partsPath(rest)}`;
+			} else if (p[1] === 'layers' && p[2] === 'application' && p[3] === 'providers' && /ApplicationProvider\.[jt]s$/.test(p.at(-1)!)) {
+				const converted = migrateCompositionSource(originals.get(file)!.toString(), workspace);
+				if (converted) {
+					compositions.set(file, converted);
+					dest = `Contexts/${workspace}/Composition.${file.endsWith('.js') ? 'js' : 'ts'}`;
+				} else
+					issue(
+						file,
+						'Composition requires manual intervention: keep the provider graph until context ownership and HttpProvider dependencies are explicit.'
+					);
 			} else if (
 				p[1] === 'layers' &&
 				(p.includes('repositories') || p.includes('repositores') || p.includes('use-cases')) &&
@@ -187,14 +268,15 @@ export async function planMigration(root = process.cwd()): Promise<MigrationPlan
 				const base = path.basename(file).replace(/(?:Repository|UseCases?)\.[^.]+$/, '');
 				const match = [...(domains.get(area) ?? [])].filter((d) => normalizePascalName(d) === base);
 				if (match.length === 1) {
-					contexts.add(base);
-					dest = `Contexts/${base}/${p.includes('use-cases') ? 'Application/UseCases' : 'Infrastructure/Repositories'}/${pascalFile(p.at(-1)!)}`;
+					const context = normalizePascalName(area);
+					dest = `Contexts/${context}/${base}/${p.includes('use-cases') ? 'Application/UseCases' : 'Infrastructure/Repositories'}/${pascalFile(p.at(-1)!)}`;
 				}
 			} else if (p[1] === 'runtime') dest = `Platform/Bootstrap/${partsPath(p.slice(p[2] === 'bootstrap' ? 3 : 2))}`;
 			else if (['essentials', 'internal'].includes(p[1]!)) {
 				if (p[2] === 'foundation') {
 					const rest = p.slice(p[3] === 'constructs' ? 4 : 3);
-					if (rest[0] !== 'provider' && rest[0] !== 'providers') dest = `Platform/Foundation/${partsPath(rest)}`;
+					if (rest[0] === 'providers') rest[0] = 'Provider';
+					dest = `Platform/Foundation/${partsPath(rest)}`;
 				} else if (p[2] === 'localization' || p[2] === 'pipelines') dest = `Platform/Bootstrap/${partsPath(p.slice(2))}`;
 				else if (p[2] === 'config') dest = `Platform/Foundation/${partsPath(p.slice(2))}`;
 			}
@@ -203,7 +285,11 @@ export async function planMigration(root = process.cwd()): Promise<MigrationPlan
 		}
 		mapping.set(
 			file,
-			dest ? path.join(app, dest) : backup(file, 'No unambiguous target (legacy provider, aggregate barrel, or unsupported folder).')
+			dest
+				? dest.startsWith('Platform/')
+					? path.join(platform, dest.slice('Platform/'.length))
+					: path.join(app, dest)
+				: backup(file, 'No unambiguous target (legacy provider, aggregate barrel, or unsupported folder).')
 		);
 	}
 	// No last-writer wins: preserve every conflicting file for manual resolution.
@@ -217,26 +303,33 @@ export async function planMigration(root = process.cwd()): Promise<MigrationPlan
 	for (const list of destinations.values()) {
 		const target = mapping.get(list[0]!)!;
 		if (target.includes(`${path.sep}.backup${path.sep}`)) continue;
-		if (list.length > 1 || (originals.has(target) && !mapping.has(target))) {
-			// Domain barrels are safely reconstituted later from each original export list.
-			if (
-				list.length > 1 &&
-				path.basename(target) === 'index.ts' &&
-				!originals.has(target) &&
-				list.every((file) =>
-					ts.createSourceFile(file, originals.get(file)!.toString(), ts.ScriptTarget.Latest, true).statements.every(ts.isExportDeclaration)
-				)
-			)
-				continue;
+		if (list.length > 1 || [...originals.keys()].some((file) => file.toLowerCase() === target.toLowerCase() && !list.includes(file))) {
 			for (const file of list) mapping.set(file, backup(file, `Target collision: ${target}; no file overwritten.`));
 		}
 	}
 	const isBackup = (file: string): boolean => file.includes(`${path.sep}.backup${path.sep}`);
+	// Unclassified files stay live, so their imports can follow successfully moved dependencies.
+	// Original bytes are copied below, rather than making callers import an archive.
+	for (const [file, target] of mapping) if (isBackup(target)) mapping.delete(file);
 	function specifier(to: string, from: string): string {
 		const relative = slash(path.relative(app, to));
+		const relativeSpecifier = () => {
+			const value = slash(path.relative(path.dirname(from), to));
+			return (value.startsWith('.') ? value : './' + value).replace(/\.(?:ts|js)$/, '').replace(/\/index$/, '');
+		};
+		if (to.startsWith(platform + path.sep))
+			return packageImports['#platform/*'] && !knownPlatformImport(packageImports['#platform/*'])
+				? relativeSpecifier()
+				: ('#platform/' + slash(path.relative(platform, to))).replace(/\.(?:ts|js)$/, '').replace(/\/index$/, '');
 		let value: string;
 		const first = relative.split('/')[0]!;
 		const prefix: Record<string, string> = { Contexts: '#contexts', Presentation: '#presentation', Platform: '#platform' };
+		if (
+			prefix[first] &&
+			packageImports[prefix[first] + '/*'] &&
+			!knownArchitectureImport(prefix[first], packageImports[prefix[first] + '/*'])
+		)
+			return relativeSpecifier();
 		if (prefix[first]) value = prefix[first] + relative.slice(first.length);
 		else {
 			value = slash(path.relative(path.dirname(from), to));
@@ -277,7 +370,62 @@ export async function planMigration(root = process.cwd()): Promise<MigrationPlan
 		return undefined;
 	}
 	const presenterNames = new Map<string, Map<string, string>>();
-	const upgradedSources = new Map<string, string>();
+	function contractsForProvider(file: string, name: string): Map<string, ServiceContract> {
+		const found = new Map<string, ServiceContract>();
+		const source = ts.createSourceFile(file, originals.get(file)?.toString() ?? '', ts.ScriptTarget.Latest, true);
+		for (const statement of source.statements) {
+			if (!ts.isVariableStatement(statement)) continue;
+			for (const declaration of statement.declarationList.declarations) {
+				if (
+					!ts.isIdentifier(declaration.name) ||
+					declaration.name.text !== name ||
+					!declaration.initializer ||
+					!ts.isCallExpression(declaration.initializer)
+				)
+					continue;
+				const settings = declaration.initializer.arguments[1];
+				if (!settings || !ts.isObjectLiteralExpression(settings)) continue;
+				const register = settings.properties.find((p) => propName(p.name) === 'register');
+				if (!register || !ts.isPropertyAssignment(register) || !ts.isArrowFunction(register.initializer)) continue;
+				let body = register.initializer.body;
+				while (ts.isParenthesizedExpression(body)) body = body.expression;
+				if (!ts.isObjectLiteralExpression(body)) continue;
+				for (const property of body.properties) {
+					if (!ts.isPropertyAssignment(property) || !ts.isArrowFunction(property.initializer)) continue;
+					const create = property.initializer.body;
+					if (!ts.isNewExpression(create) || !ts.isIdentifier(create.expression)) continue;
+					for (const imported of source.statements) {
+						if (!ts.isImportDeclaration(imported) || !ts.isStringLiteral(imported.moduleSpecifier)) continue;
+						const bindings = imported.importClause?.namedBindings;
+						if (!bindings || !ts.isNamedImports(bindings)) continue;
+						const binding = bindings.elements.find((b) => b.name.text === create.expression.getText(source));
+						if (!binding) continue;
+						const target = resolve(file, imported.moduleSpecifier.text);
+						const concrete = target && exportedSymbol(target, (binding.propertyName ?? binding.name).text);
+						if (!concrete || !/UseCases$/.test(concrete.name)) continue;
+						const contract = 'I' + concrete.name;
+						const definition = ts.createSourceFile(
+							concrete.file,
+							originals.get(concrete.file)?.toString() ?? '',
+							ts.ScriptTarget.Latest,
+							true
+						);
+						if (
+							definition.statements.some(
+								(s) =>
+									ts.isInterfaceDeclaration(s) &&
+									s.name.text === contract &&
+									s.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)
+							)
+						)
+							found.set(propName(property.name) ?? '', { name: contract, source: concrete.file });
+					}
+				}
+			}
+		}
+		return found;
+	}
+	const upgradedSources = new Map<string, string>(compositions);
 	const factorySymbols = new Map<string, Set<string>>();
 	const factoryDefinitions = new Map<string, FactoryDefinition[]>();
 	const legacyFactories = new Set<FactoryDefinition>();
@@ -322,6 +470,7 @@ export async function planMigration(root = process.cwd()): Promise<MigrationPlan
 		const source = parseSource(bytes.toString(), file);
 		const factories = new Set<string>();
 		const dependencies = new Map<string, PresenterDependencies>();
+		const serviceContracts = new Map<string, ServiceContract>();
 		const definitions = new Map<string, FactoryDefinition>();
 		for (const statement of source.statements) {
 			if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
@@ -339,6 +488,11 @@ export async function planMigration(root = process.cwd()): Promise<MigrationPlan
 				)
 					factories.add(binding.name.text);
 				if (symbol) {
+					for (const [service, contract] of contractsForProvider(symbol.file, symbol.name)) {
+						let module = slash(path.relative(path.dirname(file), contract.source)).replace(/\.[jt]s$/, '');
+						if (!module.startsWith('.')) module = './' + module;
+						serviceContracts.set(`${binding.name.text}.${service}`, { ...contract, source: module });
+					}
 					const definition = factoryDefinitions.get(symbol.file)?.find((value) => value.name === symbol.name);
 					if (definition) {
 						let module = slash(path.relative(path.dirname(file), symbol.file)).replace(/\.[jt]s$/, '');
@@ -351,7 +505,7 @@ export async function planMigration(root = process.cwd()): Promise<MigrationPlan
 		}
 		const result = file.endsWith('.svelte')
 			? { content: bytes.toString(), converted: new Map<string, string>(), issues: [] }
-			: migratePresenterSource(bytes.toString(), file, factories, dependencies);
+			: migratePresenterSource(bytes.toString(), file, factories, dependencies, serviceContracts);
 		for (const [local, definition] of definitions) {
 			if (result.converted.size) consumedFactories.add(definition);
 			const remaining = ts.createSourceFile(file, result.content, ts.ScriptTarget.Latest, true);
@@ -454,195 +608,14 @@ export async function planMigration(root = process.cwd()): Promise<MigrationPlan
 		};
 		inspect(source);
 	}
-	// Every supported old provider is expanded into private locals inside one request-scoped register.
-	type Provider = {
-		file: string;
-		name: string;
-		source: ts.SourceFile;
-		settings: ts.ObjectLiteralExpression;
-		values: ts.ObjectLiteralExpression;
-		imports: Map<string, { file?: string; source: string; exported: string }>;
-	};
-	const providers = new Map<string, Provider>();
-	for (const [file, bytes] of originals)
-		if (/Provider\.[jt]s$/.test(file) && mapping.has(file)) {
-			const source = parseSource(bytes.toString(), file);
-			const imports: Provider['imports'] = new Map();
-			for (const s of source.statements)
-				if (ts.isImportDeclaration(s) && ts.isStringLiteral(s.moduleSpecifier)) {
-					const target = resolve(file, s.moduleSpecifier.text);
-					if (s.importClause?.name)
-						imports.set(s.importClause.name.text, { file: target, source: s.moduleSpecifier.text, exported: 'default' });
-					const bindings = s.importClause?.namedBindings;
-					if (bindings && ts.isNamedImports(bindings))
-						for (const e of bindings.elements)
-							imports.set(e.name.text, {
-								file: target && (exportedSymbol(target, e.propertyName?.text ?? e.name.text)?.file ?? target),
-								source: s.moduleSpecifier.text,
-								exported:
-									(target && exportedSymbol(target, e.propertyName?.text ?? e.name.text)?.name) || e.propertyName?.text || e.name.text
-							});
-				}
-			for (const statement of source.statements)
-				if (ts.isVariableStatement(statement))
-					for (const d of statement.declarationList.declarations) {
-						if (!ts.isIdentifier(d.name) || !d.initializer || !ts.isCallExpression(d.initializer)) continue;
-						if (
-							!ts.isIdentifier(d.initializer.expression) ||
-							!['createBoundaryProvider', 'CreateDiContainer'].includes(imports.get(d.initializer.expression.text)?.exported ?? '')
-						)
-							continue;
-						if (
-							source.statements.some(
-								(s) => ts.isImportDeclaration(s) && s.importClause?.namedBindings && ts.isNamespaceImport(s.importClause.namedBindings)
-							)
-						) {
-							issue(file, 'Namespace imports in a provider require manual DI migration.');
-							continue;
-						}
-						const settings = d.initializer.arguments[1];
-						if (!settings || !ts.isObjectLiteralExpression(settings)) continue;
-						const register = settings.properties.find((p) => propName(p.name) === 'register');
-						if (!register || !ts.isPropertyAssignment(register) || !ts.isArrowFunction(register.initializer)) continue;
-						const body = register.initializer.body;
-						if (ts.isBlock(body)) {
-							issue(file, 'Custom block register requires manual DI migration.');
-							continue;
-						}
-						const values = unwrap(body);
-						if (!ts.isObjectLiteralExpression(values)) continue;
-						if (settings.properties.some((p) => !['dependsOn', 'register'].includes(propName(p.name) ?? ''))) {
-							issue(file, 'Provider has custom settings/boot; not inlined.');
-							continue;
-						}
-						if (source.statements.some((s) => !ts.isImportDeclaration(s) && s !== statement && !ts.isEmptyStatement(s))) {
-							issue(file, 'Provider has extra module declarations; manual migration required.');
-							continue;
-						}
-						providers.set(d.name.text, { file, name: d.name.text, source, settings, values, imports });
-					}
-		}
-	const diFile = path.join(app, 'Platform/Foundation/DI/ApplicationProvider.ts');
-	const diImports = new Set<string>(["import { CreateDiContainer } from '@azure-net/kit';"]);
-	const expressions = new Map<string, string>();
-	const locals: string[] = [];
-	const cached = new Map<string, string>();
-	const active = new Set<string>();
-	let counter = 0;
-	function expand(provider: Provider, key: string): string {
-		const id = `${provider.name}.${key}`;
-		if (cached.has(id)) return cached.get(id)!;
-		if (active.has(id)) throw new Error(`Circular DI: ${id}`);
-		active.add(id);
-		const property = provider.values.properties.find((p) => propName(p.name) === key);
-		if (
-			!property ||
-			!ts.isPropertyAssignment(property) ||
-			!ts.isArrowFunction(property.initializer) ||
-			property.initializer.parameters.length ||
-			ts.isBlock(property.initializer.body)
-		)
-			throw new Error(`Unsupported factory ${id}`);
-		const expression = property.initializer.body;
-		const result = ts.transform(expression, [
-			(context) => {
-				const visit: ts.Visitor = (node) => {
-					if (ts.isShorthandPropertyAssignment(node) && provider.imports.has(node.name.text)) {
-						const visited = visit(node.name) as ts.Identifier;
-						const imported = provider.imports.get(node.name.text)!;
-						if (!providers.has(imported.exported))
-							return ts.factory.createPropertyAssignment(
-								node.name.text,
-								ts.factory.createIdentifier(`M${[...providers.keys()].indexOf(provider.name)}_${visited.text}`)
-							);
-					}
-					if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression)) {
-						const imported = provider.imports.get(node.expression.text);
-						const dep = providers.get(imported?.exported ?? node.expression.text);
-						if (dep) return ts.factory.createCallExpression(ts.factory.createIdentifier(expand(dep, node.name.text)), undefined, []);
-					}
-					if (
-						ts.isIdentifier(node) &&
-						!(
-							node.parent &&
-							((ts.isPropertyAccessExpression(node.parent) && node.parent.name === node) ||
-								(ts.isPropertyAssignment(node.parent) && node.parent.name === node))
-						)
-					) {
-						const imported = provider.imports.get(node.text);
-						if (
-							imported &&
-							!providers.has(imported.exported) &&
-							!['createBoundaryProvider', 'CreateDiContainer'].includes(imported.exported)
-						) {
-							const to = imported.file && mapping.get(imported.file);
-							if (to && isBackup(to)) throw new Error(`Dependency is archived: ${imported.file}`);
-							const local = `M${[...providers.keys()].indexOf(provider.name)}_${node.text}`;
-							const source = imported.file ? specifier(to ?? imported.file, diFile) : imported.source;
-							diImports.add(
-								imported.exported === 'default'
-									? `import ${local} from ${JSON.stringify(source)};`
-									: `import { ${imported.exported} as ${local} } from ${JSON.stringify(source)};`
-							);
-							if (node.parent && ts.isShorthandPropertyAssignment(node.parent)) return node;
-							return ts.factory.createIdentifier(local);
-						}
-					}
-					return ts.visitEachChild(node, visit, context);
-				};
-				return (node) => ts.visitNode(node, visit) as ts.Expression;
-			}
-		]);
-		const code = printer.printNode(ts.EmitHint.Expression, result.transformed[0]!, provider.source);
-		result.dispose();
-		expressions.set(id, code);
-		const local = `get${++counter}_${key}`;
-		// Private lazy getters preserve original per-service sharing without nested providers.
-		if (/DatasourceProvider$/.test(provider.name)) {
-			locals.push(`const datasource${counter} = ${code};\nconst ${local} = () => datasource${counter};`);
-		} else if (!/ApplicationProvider$/.test(provider.name))
-			locals.push(
-				`const ${local} = (() => {\nlet initialized = false;\nlet value: ReturnType<typeof create>;\nconst create = () => (${code});\nreturn () => { if (!initialized) { value = create(); initialized = true; } return value; };\n})();`
-			);
-		cached.set(id, local);
-		active.delete(id);
-		return local;
+	// Do not flatten provider graphs: that changes lazy initialization and shared lifetimes.
+	for (const [file, bytes] of originals) {
+		if (!file.startsWith(path.join(root, 'src') + path.sep) || !/\.[jt]s$/.test(file) || isBackup(mapping.get(file) ?? file)) continue;
+		const input = upgradedSources.get(file) ?? bytes.toString();
+		const current = migrateCurrentApis(input, file);
+		if (current.content !== input) upgradedSources.set(file, current.content);
+		for (const reason of current.issues) issue(file, reason);
 	}
-	const publicServices = new Map<string, string>();
-	const converted = new Set<string>();
-	for (const provider of providers.values())
-		if (/ApplicationProvider$/.test(provider.name)) {
-			const checkpoint = {
-				locals: locals.length,
-				counter,
-				cached: new Map(cached),
-				expressions: new Map(expressions),
-				imports: new Set(diImports)
-			};
-			try {
-				const entries: [string, string][] = [];
-				for (const property of provider.values.properties) {
-					const key = propName(property.name);
-					if (!key || !/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key)) throw new Error('Unsupported service key');
-					if (publicServices.has(key)) throw new Error(`Duplicate application service ${key}`);
-					expand(provider, key);
-					entries.push([key, `() => (${expressions.get(`${provider.name}.${key}`)!})`]);
-				}
-				for (const [key, value] of entries) publicServices.set(key, value);
-				converted.add(provider.name);
-			} catch (error) {
-				locals.length = checkpoint.locals;
-				counter = checkpoint.counter;
-				cached.clear();
-				for (const [key, value] of checkpoint.cached) cached.set(key, value);
-				expressions.clear();
-				for (const [key, value] of checkpoint.expressions) expressions.set(key, value);
-				diImports.clear();
-				for (const value of checkpoint.imports) diImports.add(value);
-				active.clear();
-				issue(provider.file, `DI not migrated: ${String(error)}`);
-			}
-		}
 	const writes = new Map<string, Buffer>();
 	const replacements: { start: number; end: number; text: string }[] = [];
 	function namespacePresenterName(file: string, name: string, seen = new Set<string>()): string | undefined {
@@ -697,6 +670,8 @@ export async function planMigration(root = process.cwd()): Promise<MigrationPlan
 				issue(destination, `Review cross-workspace dependency on ${to}.`);
 		};
 		const newTarget = (value: string): string | undefined => {
+			// SvelteKit generates these modules outside src; no physical source file is expected.
+			if (/^\.\/\$types(?:\.js)?$/.test(value) && file.startsWith(path.join(root, 'src/routes') + path.sep)) return undefined;
 			const resolved = resolve(file, value);
 			const target = resolved && (mapping.get(resolved) ?? resolved);
 			if (!target) {
@@ -729,19 +704,15 @@ export async function planMigration(root = process.cwd()): Promise<MigrationPlan
 					const groups = new Map<string, string[]>();
 					for (const e of bindings.elements) {
 						const name = e.propertyName?.text ?? e.name.text;
-						const symbol = exportedSymbol(target, name);
-						const declared = symbol?.file ?? target;
-						const to = mapping.get(declared) ?? declared;
-						const isProvider = converted.has(name) && providers.get(name)?.file === declared;
-						const spec = isProvider ? '#platform/Foundation/DI/ApplicationProvider' : isBackup(to) ? undefined : specifier(to, destination);
+						// Preserve barrel evaluation and public aliases, including side-effect exports.
+						const to = mapping.get(target) ?? target;
+						const spec = isBackup(to) ? undefined : specifier(to, destination);
 						if (!spec) {
 							issue(destination, `Unresolved imported symbol ${name} from ${node.moduleSpecifier.text}`);
 							continue;
 						}
 						checkBoundary(to);
-						const imported = isProvider
-							? 'ApplicationProvider'
-							: (presenterNames.get(declared)?.get(symbol?.name ?? name) ?? symbol?.name ?? name);
+						const imported = namespacePresenterName(target, name) ?? name;
 						const parts = groups.get(spec) ?? [];
 						parts.push(
 							`${!node.importClause?.isTypeOnly && e.isTypeOnly ? 'type ' : ''}${imported}${imported === e.name.text ? '' : ` as ${e.name.text}`}`
@@ -845,7 +816,7 @@ export async function planMigration(root = process.cwd()): Promise<MigrationPlan
 	for (const [file, bytes] of originals) {
 		if (!file.startsWith(path.join(root, 'src') + path.sep)) continue;
 		const to = mapping.get(file) ?? file;
-		if (!oldRoots.size && !upgradedSources.size) continue;
+		if (!mapping.size && !oldRoots.size && !upgradedSources.size) continue;
 		const output =
 			isBackup(to) || !textFile.test(file) ? bytes : Buffer.from(rewrite(file, to, upgradedSources.get(file) ?? bytes.toString()));
 		if (writes.has(to) && path.basename(to) === 'index.ts') {
@@ -859,84 +830,153 @@ export async function planMigration(root = process.cwd()): Promise<MigrationPlan
 			);
 		} else if (to !== file || !bytes.equals(output)) writes.set(to, output);
 	}
-	if (oldRoots.size) {
-		if (originals.has(diFile)) throw new Error(`Refusing to overwrite existing ${diFile}`);
-		writes.set(
-			diFile,
-			Buffer.from(
-				`${[...diImports].join('\n')}\n\nexport const ApplicationProvider = CreateDiContainer('ApplicationProvider', {\nregister: () => {\n${locals.join('\n')}\nreturn {\n${[...publicServices].map(([name, getter]) => `${name}: ${getter}`).join(',\n')}\n};\n}\n});\n`
-			)
-		);
-		writes.set(path.join(path.dirname(diFile), 'index.ts'), Buffer.from("export * from './ApplicationProvider';\n"));
+	if (
+		oldRoots.size ||
+		mapping.size ||
+		Object.entries(packageImports).some(
+			([key, value]) => key.startsWith('#platform') && knownPlatformImport(value) && JSON.stringify(value).includes('./src/app/Platform')
+		)
+	) {
 		workspaces.add('Shared');
-		for (const context of contexts)
-			for (const folder of CONTEXT_DIRS) {
-				const index = path.join(app, 'Contexts', context, folder, 'index.ts');
-				if (!writes.has(index) && !originals.has(index)) writes.set(index, Buffer.from('export {};\n'));
-			}
+		for (const folder of ['Contracts', 'Domain']) {
+			const index = path.join(app, 'Contexts/SharedKernel', folder, 'index.ts');
+			if (!writes.has(index) && !originals.has(index)) writes.set(index, Buffer.from('export {};\n'));
+		}
 		for (const workspace of workspaces)
-			for (const folder of ['Ui', 'Scopes', 'Shell']) {
+			for (const folder of [
+				'Scopes',
+				'Ui/Actions',
+				'Ui/Style',
+				'Ui/Components/Scopes',
+				'Ui/Components/Composite',
+				'Ui/Components/Page',
+				'Ui/Components/Core'
+			]) {
 				const index = path.join(app, 'Presentation', workspace, folder, 'index.ts');
 				if (!writes.has(index) && !originals.has(index)) writes.set(index, Buffer.from('export {};\n'));
 			}
 		const packageFile = path.join(root, 'package.json');
-		writes.set(packageFile, Buffer.from(await mergePackageImports(originals.get(packageFile)?.toString() ?? '{}')));
+		const json = JSON.parse(originals.get(packageFile)?.toString() ?? '{}');
+		if (json.imports != null && (typeof json.imports !== 'object' || Array.isArray(json.imports)))
+			throw new Error('Expected package.json imports object');
+		const imports = { ...json.imports };
+		const relocate = (value: unknown): unknown => {
+			if (typeof value === 'string') return value.replace(/^\.\/src\/app\/Platform(?=\/|$)/, './src/platform');
+			if (Array.isArray(value)) return value.map(relocate);
+			if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, relocate(item)]));
+			return value;
+		};
+		// Upgrade a known old bare alias only when it already exists; never invent root barrels.
+		const expectedImports: Record<string, unknown> = { ...PACKAGE_IMPORTS };
+		if ('#platform' in imports) expectedImports['#platform'] = './src/platform/index.ts';
+		for (const [key, expected] of Object.entries(expectedImports)) {
+			const target = key.startsWith('#platform') ? relocate(expected) : expected;
+			if (!(key in imports)) imports[key] = target;
+			else if (key === '#platform' || key === '#platform/*') {
+				if (knownPlatformImport(imports[key])) imports[key] = relocate(imports[key]);
+				else issue(packageFile, `Custom package import ${key} retained; review relocated platform paths manually.`);
+			} else if (!knownArchitectureImport(key, imports[key])) issue(packageFile, `Custom package import ${key} retained.`);
+		}
+		const content = Buffer.from(JSON.stringify({ ...json, imports }, null, '\t') + '\n');
+		if (!originals.get(packageFile)?.equals(content)) writes.set(packageFile, content);
 	}
 	const configFile = [...originals.keys()].find((p) => /azure-net\.config\.[jt]s$/.test(p)) ?? path.join(root, 'azure-net.config.ts');
-	let config = flattenConfigLiterals(originals.get(configFile)?.toString() ?? 'export default {};');
-	const configSource = ts.createSourceFile(configFile, config, ts.ScriptTarget.Latest, true);
-	const exported = configSource.statements.find(ts.isExportAssignment);
-	if (!exported || !ts.isObjectLiteralExpression(exported.expression))
-		throw new Error('Migration requires an object-literal default config; normalize it first.');
-	const kept = exported.expression.properties.filter(
-		(p) =>
-			!['defaultPresenterFactory', ...(oldRoots.size ? ['contexts', 'coreAlias', 'sharedAlias', 'presentationWorkspaces'] : [])].includes(
-				propName(p.name) ?? ''
-			)
-	);
-	if (oldRoots.size) {
-		kept.push(
-			ts.factory.createPropertyAssignment(
-				'presentationWorkspaces',
-				ts.factory.createArrayLiteralExpression([...workspaces].sort().map((w) => ts.factory.createStringLiteral(w)))
-			)
-		);
-		if (!kept.some((p) => propName(p.name) === 'runChecksBeforePush'))
-			kept.push(ts.factory.createPropertyAssignment('runChecksBeforePush', ts.factory.createTrue()));
+	const plannedSources = new Map<string, string>();
+	for (const [file, bytes] of originals) {
+		if (!file.startsWith(path.join(root, 'src') + path.sep) || !/\.(?:[jt]s|svelte)$/.test(file)) continue;
+		const destination = mapping.get(file) ?? file;
+		plannedSources.set(destination, (writes.get(destination) ?? bytes).toString());
 	}
-	config =
-		config.slice(0, exported.expression.getStart(configSource)) +
-		printer.printNode(ts.EmitHint.Expression, ts.factory.createObjectLiteralExpression(kept, true), configSource) +
-		config.slice(exported.expression.end);
-	if (oldRoots.size || kept.length !== exported.expression.properties.length) writes.set(configFile, Buffer.from(config));
+	const virtualResolve = (file: string, value: string): string | undefined => {
+		let base = value.startsWith('.') ? path.resolve(path.dirname(file), value) : undefined;
+		for (const [prefix, directory] of [
+			['#platform', platform],
+			['#contexts', path.join(app, 'Contexts')],
+			['#presentation', path.join(app, 'Presentation')]
+		] as const)
+			if (value === prefix || value.startsWith(prefix + '/')) base = path.join(directory, value.slice(prefix.length));
+		if (!base) return undefined;
+		return [base, base + '.ts', base + '.js', base + '/index.ts', base + '/index.js', base.replace(/\.js$/, '.ts')].find((candidate) =>
+			plannedSources.has(candidate)
+		);
+	};
+	const layout = migratePresenterLayout(plannedSources, virtualResolve, specifier);
+	for (const [file, content] of layout.updates) writes.set(file, Buffer.from(content));
+	for (const problem of layout.issues) issue(problem.file, problem.reason);
+	for (const [file, content] of new Map([...plannedSources, ...layout.updates]))
+		if (/Presenter\.[jt]s$/.test(file) && /ReturnType<typeof \w*Provider>/.test(content))
+			issue(
+				file,
+				'Use-case interface could not be proven from the provider graph; replace the retained ReturnType injection with the appropriate IUseCases contract manually.'
+			);
+	const config = migrateConfig(originals.get(configFile)?.toString() ?? 'export default {};', oldRoots.size ? [...workspaces].sort() : []);
+	for (const reason of config.issues) issue(configFile, reason);
+	if (config.content !== originals.get(configFile)?.toString() && (originals.has(configFile) || oldRoots.size))
+		writes.set(configFile, Buffer.from(config.content));
 	const tsconfig = path.join(root, 'tsconfig.json');
-	if (oldRoots.size && originals.has(tsconfig)) {
+	if ((oldRoots.size || issues.length) && originals.has(tsconfig)) {
 		const parsed = ts.parseConfigFileTextToJson(tsconfig, originals.get(tsconfig)!.toString());
 		if (parsed.error) throw new Error('Cannot parse tsconfig.json safely.');
 		const exclude = parsed.config.exclude ?? ['node_modules', 'bower_components', 'jspm_packages'];
 		parsed.config.exclude = [...new Set([...exclude, 'src/app/.backup/**'])];
 		writes.set(tsconfig, Buffer.from(JSON.stringify(parsed.config, null, '\t') + '\n'));
 	}
-	if (oldRoots.size) {
-		const diSource = ts.createSourceFile(diFile, writes.get(diFile)!.toString(), ts.ScriptTarget.Latest, true);
-		writes.set(diFile, Buffer.from(printer.printFile(diSource)));
-	}
-	if (!oldRoots.size && !upgradedSources.size && !issues.length) throw new Error('Nothing to migrate.');
+
 	const moves = [...mapping].map(([from, to]) => ({ from, to }));
-	for (const item of issues) item.file = mapping.get(item.file) ?? item.file;
+	for (const item of issues) {
+		const source = originals.has(item.file) ? item.file : [...mapping].find(([, to]) => to === item.file)?.[0];
+		if (source) {
+			const relative = source.startsWith(app + path.sep) ? path.relative(app, source) : path.join('_project', path.relative(root, source));
+			const copy = path.join(app, '.backup', relative);
+			if (!writes.has(copy)) writes.set(copy, originals.get(source)!);
+		}
+		item.file = mapping.get(item.file) ?? item.file;
+	}
+	if (issues.length) writes.set(path.join(app, '.backup/MigrationIssues.json'), Buffer.from(JSON.stringify(issues, null, 2) + '\n'));
+	// Repeated runs reuse identical archives and never overwrite different original bytes.
+	for (const [target, bytes] of [...writes]) {
+		if (!isBackup(target)) {
+			if (originals.get(target)?.equals(bytes)) writes.delete(target);
+			continue;
+		}
+		let candidate = target;
+		let version = 0;
+		while (true) {
+			await assertSafeTarget(root, candidate);
+			try {
+				const existing = await fs.readFile(candidate);
+				originals.set(candidate, existing);
+				if (existing.equals(bytes)) {
+					writes.delete(target);
+					break;
+				}
+				candidate = target + '.' + createHash('sha256').update(bytes).digest('hex').slice(0, 12) + (version++ ? '.' + version : '');
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+				if (candidate !== target) {
+					writes.delete(target);
+					writes.set(candidate, bytes);
+				}
+				break;
+			}
+		}
+	}
+	if (!mapping.size && !writes.size && !issues.length) throw new Error('Nothing to migrate.');
 	return {
 		root,
 		moves,
 		issues,
 		writes,
 		originals,
-		removes: [...mapping.keys()],
+		removes: [...mapping].filter(([, to]) => !isBackup(to)).map(([from]) => from),
 		workspaces: [...workspaces]
 	};
 }
 
 export async function applyMigration(plan: MigrationPlan): Promise<string> {
 	// Verify the plan before creating any backup or touching user files.
+	for (const file of new Set([...plan.originals.keys(), ...plan.writes.keys(), ...plan.removes])) await assertSafeTarget(plan.root, file);
+	await assertSafeTarget(plan.root, path.join(plan.root, '.azure-net/migrations'));
 	for (const file of await files(path.join(plan.root, 'src')))
 		if (!plan.originals.has(file)) throw new Error(`New source file since planning: ${file}`);
 	for (const [file, bytes] of plan.originals)
