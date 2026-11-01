@@ -1,4 +1,4 @@
 import { generateFeature } from './generateFeature.js';
 export default function generateFeaturePreset(options = {}) {
-	return generateFeature(options, true);
+    return generateFeature(options, true);
 }

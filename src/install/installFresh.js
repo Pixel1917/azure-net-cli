@@ -4,39 +4,35 @@ import prettierConfig from '../plugins/prettierConfig.js';
 import { addGitHooks } from '../git/hooks.js';
 import initEdges from '../init/initEdges.js';
 import initStructure from '../init/initStructure.js';
-import {
-	createCoreSchema,
-	createDatasource,
-	createProgram,
-	createTranslationManager,
-	createCookieInstance,
-	createErrorHandler
-} from '../scaffolds/index.js';
+import { createCoreSchema, createDatasource, createProgram, createTranslationManager, createCookieInstance, createErrorHandler } from '../scaffolds/index.js';
 const runOptionalStep = async (message, action) => {
-	const { confirmed } = await prompts({ type: 'confirm', name: 'confirmed', message, initial: true });
-	if (!confirmed) return false;
-	try {
-		await action();
-	} catch (error) {
-		throw new Error(`Step failed: ${message}`, { cause: error });
-	}
-	if (process.exitCode) throw new Error(`Step failed: ${message}`);
-	return true;
+    const { confirmed } = await prompts({ type: 'confirm', name: 'confirmed', message, initial: true });
+    if (!confirmed)
+        return false;
+    try {
+        await action();
+    }
+    catch (error) {
+        throw new Error(`Step failed: ${message}`, { cause: error });
+    }
+    if (process.exitCode)
+        throw new Error(`Step failed: ${message}`);
+    return true;
 };
 export default async function installFresh() {
-	await initStructure();
-	await configurePackageManager();
-	await initEdges();
-	await runOptionalStep('Create cookie instance?', createCookieInstance);
-	await runOptionalStep('Create datasource (with optional response and HttpProvider)?', createDatasource);
-	await runOptionalStep('Create schema factory?', createCoreSchema);
-	const errorHandler = await runOptionalStep('Create error handler?', createErrorHandler);
-	const translations = await runOptionalStep('Create translation manager (i18n)?', createTranslationManager);
-	await createProgram({ errorHandler, translations });
-	await runOptionalStep('Create Prettier configuration (no packages installed)?', prettierConfig);
-	await runOptionalStep('Install git pre-commit checks?', addGitHooks);
-	console.log('install fresh completed');
-	console.log(`
+    await initStructure();
+    await configurePackageManager();
+    await initEdges();
+    await runOptionalStep('Create cookie instance?', createCookieInstance);
+    await runOptionalStep('Create datasource (with optional response and HttpProvider)?', createDatasource);
+    await runOptionalStep('Create schema factory?', createCoreSchema);
+    const errorHandler = await runOptionalStep('Create error handler?', createErrorHandler);
+    const translations = await runOptionalStep('Create translation manager (i18n)?', createTranslationManager);
+    await createProgram({ errorHandler, translations });
+    await runOptionalStep('Create Prettier configuration (no packages installed)?', prettierConfig);
+    await runOptionalStep('Install git pre-commit checks?', addGitHooks);
+    console.log('install fresh completed');
+    console.log(`
 Next steps:
 1. In src/routes/+layout.svelte, merge the following into the existing instance script:
 

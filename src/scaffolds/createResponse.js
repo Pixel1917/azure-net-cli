@@ -5,8 +5,8 @@ import { writeIfNotExists, updateIndexTs } from '../utils/fileUtils.js';
 import { toPascalCase } from '../utils/contextUtils.js';
 import { httpSourcePath, selectHttpSource } from '../utils/httpSources.js';
 const createResponseWithWrapperTemplate = (name) => {
-	const interfaceName = `I${name}`;
-	return `import { ResponseBuilder } from '@azure-net/kit/infra';
+    const interfaceName = `I${name}`;
+    return `import { ResponseBuilder } from '@azure-net/kit/infra';
 
 export interface ${interfaceName}<TData, TMeta = unknown> {
 \tdata: TData;
@@ -31,36 +31,39 @@ export interface I${name}Result<TData = unknown, TMeta = unknown> extends Pick<R
 export class ${name}<TData = unknown, TMeta = unknown> extends ResponseBuilder<TData, TMeta> implements I${name}Result<TData, TMeta> {}
 `;
 const ensureResponseName = (rawName) => {
-	const normalized = toPascalCase(rawName || 'ApiResponse') || 'ApiResponse';
-	return normalized.endsWith('Response') ? normalized : `${normalized}Response`;
+    const normalized = toPascalCase(rawName || 'ApiResponse') || 'ApiResponse';
+    return normalized.endsWith('Response') ? normalized : `${normalized}Response`;
 };
 export default async function createResponse(sourceName) {
-	const source = sourceName ?? (await selectHttpSource());
-	if (!source) return;
-	const { responseNameRaw } = await prompts({
-		type: 'text',
-		name: 'responseNameRaw',
-		message: 'Response class name:',
-		initial: `${source.replace(/Datasource$/, '')}Response`
-	});
-	if (responseNameRaw === undefined) return;
-	const responseName = ensureResponseName(String(responseNameRaw ?? 'ApiResponse'));
-	const { useCommonResponseWrapper } = await prompts({
-		type: 'confirm',
-		name: 'useCommonResponseWrapper',
-		message: 'Use common backend response wrapper interface?',
-		initial: true
-	});
-	if (useCommonResponseWrapper === undefined) return;
-	const responseRoot = httpSourcePath(source);
-	const filePath = path.join(responseRoot, `${responseName}.ts`);
-	await fs.mkdir(responseRoot, { recursive: true });
-	const template = useCommonResponseWrapper ? createResponseWithWrapperTemplate(responseName) : createResponseSimpleTemplate(responseName);
-	const created = await writeIfNotExists(filePath, template);
-	await updateIndexTs(responseRoot);
-	if (!created) {
-		console.log(`⚠️ Response "${responseName}" already exists. File was not overwritten.`);
-		return;
-	}
-	console.log(`✅ Response created: ${filePath}`);
+    const source = sourceName ?? (await selectHttpSource());
+    if (!source)
+        return;
+    const { responseNameRaw } = await prompts({
+        type: 'text',
+        name: 'responseNameRaw',
+        message: 'Response class name:',
+        initial: `${source.replace(/Datasource$/, '')}Response`
+    });
+    if (responseNameRaw === undefined)
+        return;
+    const responseName = ensureResponseName(String(responseNameRaw ?? 'ApiResponse'));
+    const { useCommonResponseWrapper } = await prompts({
+        type: 'confirm',
+        name: 'useCommonResponseWrapper',
+        message: 'Use common backend response wrapper interface?',
+        initial: true
+    });
+    if (useCommonResponseWrapper === undefined)
+        return;
+    const responseRoot = httpSourcePath(source);
+    const filePath = path.join(responseRoot, `${responseName}.ts`);
+    await fs.mkdir(responseRoot, { recursive: true });
+    const template = useCommonResponseWrapper ? createResponseWithWrapperTemplate(responseName) : createResponseSimpleTemplate(responseName);
+    const created = await writeIfNotExists(filePath, template);
+    await updateIndexTs(responseRoot);
+    if (!created) {
+        console.log(`⚠️ Response "${responseName}" already exists. File was not overwritten.`);
+        return;
+    }
+    console.log(`✅ Response created: ${filePath}`);
 }
