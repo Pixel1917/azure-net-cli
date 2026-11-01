@@ -3,7 +3,7 @@ import path from 'node:path';
 import prompts from 'prompts';
 import { writeIfNotExists, updateIndexTs } from '../utils/fileUtils.js';
 import { toPascalCase } from '../utils/contextUtils.js';
-import { getFoundationConstructPath, getSharedState } from '../utils/sharedFoundation.js';
+import { httpSourcePath, selectHttpSource } from '../utils/httpSources.js';
 
 const createResponseWithWrapperTemplate = (name: string): string => {
 	const interfaceName = `I${name}`;
@@ -38,14 +38,17 @@ const ensureResponseName = (rawName: string): string => {
 	return normalized.endsWith('Response') ? normalized : `${normalized}Response`;
 };
 
-export default async function createResponse(): Promise<void> {
+export default async function createResponse(sourceName?: string): Promise<void> {
+	const source = sourceName ?? (await selectHttpSource());
+	if (!source) return;
 	const { responseNameRaw } = await prompts({
 		type: 'text',
 		name: 'responseNameRaw',
 		message: 'Response class name:',
-		initial: 'ApiResponse'
+		initial: `${source.replace(/Datasource$/, '')}Response`
 	});
 
+	if (responseNameRaw === undefined) return;
 	const responseName = ensureResponseName(String(responseNameRaw ?? 'ApiResponse'));
 
 	const { useCommonResponseWrapper } = await prompts({
@@ -54,9 +57,9 @@ export default async function createResponse(): Promise<void> {
 		message: 'Use common backend response wrapper interface?',
 		initial: true
 	});
+	if (useCommonResponseWrapper === undefined) return;
 
-	const { sharedContext } = await getSharedState();
-	const responseRoot = getFoundationConstructPath(sharedContext.name, 'response');
+	const responseRoot = httpSourcePath(source);
 	const filePath = path.join(responseRoot, `${responseName}.ts`);
 	await fs.mkdir(responseRoot, { recursive: true });
 

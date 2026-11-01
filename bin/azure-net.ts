@@ -48,7 +48,7 @@ program
 	.command('fresh')
 	.description('Configure a new application interactively')
 	.action(handler('install/installFresh'));
-const foundation = program.command('foundation').description('Generate src/platform/Foundation artifacts');
+const core = program.command('core').description('Generate src/app/ApplicationCore artifacts');
 for (const [name, file] of Object.entries({
 	schema: 'createCoreSchema',
 	'schema-rule': 'createSchemaRule',
@@ -56,8 +56,8 @@ for (const [name, file] of Object.entries({
 	datasource: 'createDatasource',
 	'cookie-instance': 'createCookieInstance'
 }))
-	foundation.command(name).action(handler(`scaffolds/${file}`));
-const bootstrap = program.command('bootstrap').description('Generate src/platform/Bootstrap artifacts');
+	core.command(name).action(handler(`scaffolds/${file}`));
+const bootstrap = program.command('bootstrap').description('Generate src/bootstrap artifacts');
 for (const [name, file] of Object.entries({
 	translations: 'createTranslationManager',
 	middleware: 'createMiddleware',

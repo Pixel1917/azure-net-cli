@@ -79,7 +79,8 @@ export default async function checkDomain(): Promise<void> {
 			const visit = (node: ts.Node): void => {
 				if (ts.isEnumDeclaration(node)) {
 					if (!node.name.text.endsWith('Enum')) issue(node, `Enum "${node.name.text}" must end with Enum`);
-					if (basename !== 'index' && !basename.endsWith('Enum')) issue(node, 'Enum file name must end with Enum');
+					if (parts.slice(0, -1).includes('Enums') && basename !== 'index' && !basename.endsWith('Enum'))
+						issue(node, 'Enum file name must end with Enum');
 				}
 				if (context && (ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node))) {
 					if (ts.isInterfaceDeclaration(node) && !interfaceName(node.name.text))

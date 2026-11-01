@@ -2,20 +2,14 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import prompts from 'prompts';
 import { writeIfNotExists, updateIndexTs } from '../utils/fileUtils.js';
-import { normalizePascalName, getPlatformPath } from '../utils/architecture.js';
+import { httpSourcePath, selectHttpSource } from '../utils/httpSources.js';
+import createResponse from './createResponse.js';
 import { registerDatasource } from './registerDatasource.js';
 
 export default async function createDatasource(): Promise<void> {
-	const { datasourceNameRaw } = await prompts({
-		type: 'text',
-		name: 'datasourceNameRaw',
-		message: 'Datasource name:',
-		initial: 'ApiDatasource'
-	});
-	if (datasourceNameRaw === undefined) return;
-	const normalized = normalizePascalName(String(datasourceNameRaw));
-	const className = normalized.endsWith('Datasource') ? normalized : `${normalized}Datasource`;
-	const responseRoot = path.join(getPlatformPath(), 'Foundation/Response');
+	const className = await selectHttpSource();
+	if (!className) return;
+	const responseRoot = httpSourcePath(className);
 	let responses: string[] = [];
 	try {
 		responses = (await fs.readdir(responseRoot))
@@ -23,6 +17,24 @@ export default async function createDatasource(): Promise<void> {
 			.map((file) => file.slice(0, -3));
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+	}
+	if (!responses.length) {
+		const { response: create } = await prompts({
+			type: 'confirm',
+			name: 'response',
+			message: 'Create a response for this datasource?',
+			initial: true
+		});
+		if (create === undefined) return;
+		if (create) {
+			await createResponse(className);
+			const files = await fs.readdir(responseRoot).catch((error: NodeJS.ErrnoException) => {
+				if (error.code === 'ENOENT') return [];
+				throw error;
+			});
+			responses = files.filter((file) => file.endsWith('Response.ts')).map((file) => file.slice(0, -3));
+			if (!responses.length) return;
+		}
 	}
 	let response: string | undefined;
 	if (responses.length) {
@@ -32,6 +44,7 @@ export default async function createDatasource(): Promise<void> {
 			message: 'Select response for datasource:',
 			choices: [{ title: 'No response', value: '' }, ...responses.map((name) => ({ title: name, value: name }))]
 		});
+		if (answer.responseName === undefined) return;
 		response = answer.responseName || undefined;
 		if (response && !responses.includes(response)) throw new Error('Unknown response selected.');
 	}
@@ -49,11 +62,11 @@ export default async function createDatasource(): Promise<void> {
 		const hasResult = new RegExp(`export\\s+interface\\s+I${response}Result\\b`).test(content);
 		if (!hasResult)
 			localResultInterface = `interface I${response}Result<TData = unknown, TMeta = unknown> extends Pick<${response}<TData, TMeta>, keyof ${response}<TData, TMeta>> {}\n`;
-		imports = `import { ${response}${declaration ? `, type I${response}` : ''}${hasResult ? `, type I${response}Result` : ''} } from '#platform/Foundation/Response/${response}';\n`;
+		imports = `import { ${response}${declaration ? `, type I${response}` : ''}${hasResult ? `, type I${response}Result` : ''} } from './${response}';\n`;
 	}
-	const root = path.join(getPlatformPath(), 'Foundation/Datasource');
+	const root = httpSourcePath(className);
 	const created = await writeIfNotExists(
-		path.join(root, `${className}.ts`),
+		path.join(root, `Datasource.ts`),
 		`import { BaseHttpDatasource, type CreateRequestCallbackType${response ? '' : ', type IHttpServiceResponse'} } from '@azure-net/kit/infra';
 ${imports}${localResultInterface}
 export interface I${className} extends Pick<BaseHttpDatasource, keyof BaseHttpDatasource> {

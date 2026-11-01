@@ -22,7 +22,7 @@ test('connects translations before user hooks and removes obsolete methods only 
 	const input = sources();
 	const result = migrateTranslationsSources(input, resolve);
 	assert.deepEqual(result.issues, []);
-	assert.match(result.updates.get('/src/Bootstrap.ts'), /app.useTranslations\(MigratedTranslationManager\).useServer/);
+	assert.match(result.updates.get('/src/Bootstrap.ts'), /app.useTranslations\(MigratedTranslationManager\);\s*app.useServer/);
 	assert.match(result.updates.get('/src/Translations.ts'), /@azure-net\/kit\/i18n/);
 	assert.doesNotMatch(result.updates.get('/src/Helper.ts'), /preloadTranslation|initializeClient/);
 	assert.match(result.updates.get('/src/Helper.ts'), /Promise.resolve\(\)/);
@@ -65,4 +65,19 @@ test('escaped manager references prevent partial facade and lifecycle updates', 
 	const result = migrateTranslationsSources(input, resolve);
 	assert.equal(result.updates.size, 0);
 	assert(result.issues.some((issue) => /escapes/.test(issue.reason)));
+});
+
+test('connects translations to a non-fluent configuration and preserves hook returns', () => {
+	const input = sources();
+	input.set(
+		'/src/Bootstrap.ts',
+		`import {createApp} from '@azure-net/kit'; import {localization} from './Helper'; export const start=()=>createApp(app=>{app.useServer(async({event,resolve})=>{await localization().server(); return resolve(event);});});`
+	);
+	const result = migrateTranslationsSources(input, resolve);
+	assert.deepEqual(result.issues, []);
+	const output = result.updates.get('/src/Bootstrap.ts');
+	assert.match(output, /app.useTranslations\(MigratedTranslationManager\);/);
+	assert.match(output, /return resolve\(event\);/);
+	assert.doesNotMatch(output, /\)\.use/);
+	assert.equal(migrateTranslationsSources(new Map([...input, ...result.updates]), resolve).updates.size, 0);
 });

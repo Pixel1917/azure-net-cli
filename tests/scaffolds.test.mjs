@@ -49,24 +49,58 @@ const fixture = async (fn) => {
 	}
 };
 
-test('foundation scaffolds work without config or context prompts', () =>
+test('application core scaffolds work without config or context prompts', () =>
 	fixture(async () => {
-		const base = 'src/platform/Foundation';
-		await run('scaffolds/createResponse.ts', ['Api', true]);
-		await run('scaffolds/createDatasource.ts', ['MockApi', 'ApiResponse', true]);
+		const base = 'src/app/ApplicationCore';
+		await run('scaffolds/createResponse.ts', ['ApiDatasource', 'Api', true]);
+		await run('scaffolds/createDatasource.ts', ['__new__', 'MockApi', true, 'Api', true, 'ApiResponse', true]);
 		await run('scaffolds/createCoreSchema.ts', ['Schema', 'en', false]);
 		await run('scaffolds/createSchemaRule.ts', ['file-size']);
-		await exists(`${base}/Schema/CustomRules/FileSize.ts`);
-		assert.match(await read(`${base}/Datasource/MockApiDatasource.ts`), /\#platform\/Foundation\/Response/);
-		await fs.writeFile(`${base}/Response/ApiResponse.ts`, '// preserved');
-		await run('scaffolds/createResponse.ts', ['Api', true]);
-		assert.equal(await read(`${base}/Response/ApiResponse.ts`), '// preserved');
+		await exists(`${base}/Validation/CustomRules/FileSize.ts`);
+		assert.match(await read(`${base}/Http/MockApiDatasource/Datasource.ts`), /from '\.\/ApiResponse'/);
+		await fs.writeFile(`${base}/Http/ApiDatasource/ApiResponse.ts`, '// preserved');
+		await run('scaffolds/createResponse.ts', ['ApiDatasource', 'Api', true]);
+		assert.equal(await read(`${base}/Http/ApiDatasource/ApiResponse.ts`), '// preserved');
 	}));
+
+for (const response of [false, true]) {
+	test(`fresh datasource creates its optional response inline (response=${response})`, () =>
+		fixture(async () => {
+			await fs.writeFile('package.json', JSON.stringify({ type: 'module' }));
+			await fs.writeFile('vite.config.ts', "import { sveltekit } from '@sveltejs/kit/vite'; export default {plugins: [sveltekit()]};");
+			await run('install/installFresh.ts', [
+				false,
+				true,
+				'Backend',
+				response,
+				...(response ? ['Envelope', true, 'EnvelopeResponse'] : []),
+				true,
+				false,
+				false,
+				false,
+				false,
+				false
+			]);
+			assert.deepEqual(prompts._injected, []);
+			const root = 'src/app/ApplicationCore/Http/BackendDatasource';
+			const datasource = await read(`${root}/Datasource.ts`);
+			if (response) {
+				assert.match(await read(`${root}/EnvelopeResponse.ts`), /interface IEnvelopeResponse<TData, TMeta = unknown>/);
+				assert.match(datasource, /from '\.\/EnvelopeResponse'/);
+			} else {
+				await assert.rejects(fs.access(`${root}/EnvelopeResponse.ts`), { code: 'ENOENT' });
+				assert.match(datasource, /Promise<IHttpServiceResponse<TData>>/);
+			}
+			assert.match(await read(`${root}/HttpProvider.ts`), /CreateServiceContainer\('BackendDatasourceHttpProvider'/);
+			await exists('src/bootstrap/index.ts');
+			await exists('src/program.ts');
+		}));
+}
 
 test('locales preserve IDs but normalize directories', () =>
 	fixture(async () => {
 		await run('scaffolds/createTranslationManager.ts', ['en, pt-BR', 'pt-BR']);
-		const root = 'src/platform/Bootstrap/Localization';
+		const root = 'src/bootstrap/Localization';
 		await exists(`${root}/Locales/PtBR/index.ts`);
 		assert.match(await read(`${root}/Locales/index.ts`), /'pt-BR':.*\.\/PtBR'/);
 		assert.match(await read(`${root}/TranslationManager.ts`), /initLang: 'pt-BR'/);
@@ -84,7 +118,7 @@ test('routes use Bootstrap and resolve cwd per invocation', () =>
 		await fs.mkdir('src/routes/(account)/users/[[id]]', { recursive: true });
 		await fs.writeFile('src/routes/(account)/users/[[id]]/+page.svelte', '');
 		await run('generate/routes/generateRoutes.ts', ['root-groups']);
-		const output = await read('src/platform/Bootstrap/Routes/index.ts');
+		const output = await read('src/bootstrap/Routes/index.ts');
 		assert.match(output, /accountRoutes/);
 		assert.match(output, /\/users\/\{id\}/);
 		assert.match(output, /'\/users'/);
@@ -143,13 +177,13 @@ test('program filename respects plugin contract and is never overwritten', () =>
 	fixture(async () => {
 		await run('scaffolds/createProgram.ts');
 		assert.match(await read('src/program.ts'), /AppBootstrap\(\)/);
-		assert.match(await read('src/platform/Bootstrap/Bootstrap.ts'), /createApp\(\(app\) => app\)/);
+		assert.match(await read('src/bootstrap/index.ts'), /createApp\(\(app\) => \{/);
 		assert.match(await read('src/program.ts'), /export const \{ register \}/);
 		assert.doesNotMatch(await read('src/program.ts'), /Container|\.dependencies\(/);
 		await fs.writeFile('src/program.ts', '// custom');
 		await run('scaffolds/createProgram.ts');
 		assert.equal(await read('src/program.ts'), '// custom');
-		assert.deepEqual(await fs.readdir('src'), ['platform', 'program.ts']);
+		assert.deepEqual(await fs.readdir('src'), ['bootstrap', 'program.ts']);
 	}));
 
 let svelteCompiler;
@@ -184,9 +218,9 @@ test('install fresh initializes without legacy config and keeps program contract
 	fixture(async () => {
 		await fs.writeFile('package.json', JSON.stringify({ type: 'module' }));
 		await fs.writeFile('vite.config.ts', "import { sveltekit } from '@sveltejs/kit/vite'; export default {plugins: [sveltekit()]};");
-		await run('install/installFresh.ts', Array(8).fill(false));
+		await run('install/installFresh.ts', Array(7).fill(false));
 		await exists('src/program.ts');
-		await exists('src/platform/Bootstrap/Bootstrap.ts');
+		await exists('src/bootstrap/index.ts');
 		await exists('src/app/Presentation/Public/Ui');
 		const config = await read('azure-net.config.ts');
 		assert.doesNotMatch(config, /contexts|sharedAlias/);
@@ -220,52 +254,64 @@ test('translation scaffold preserves generated bootstrap and program', () =>
 		await run('scaffolds/createTranslationManager.ts', ['en, ru', 'en']);
 		const program = await read('src/program.ts');
 		assert.match(program, /AppBootstrap\(\)/);
-		assert.match(await read('src/platform/Bootstrap/Bootstrap.ts'), /createApp\(\(app\) => app\)/);
+		assert.match(await read('src/bootstrap/index.ts'), /createApp\(\(app\) => \{/);
 		await run('scaffolds/createTranslationManager.ts', ['en, ru', 'en']);
 		assert.equal(await read('src/program.ts'), program);
 	}));
 
-test('foundation datasource interfaces and optional provider match response metadata contracts', () =>
+test('application core datasource interfaces and optional provider match response metadata contracts', () =>
 	fixture(async () => {
-		await run('scaffolds/createResponse.ts', ['Api', true]);
-		await run('scaffolds/createDatasource.ts', ['Api', 'ApiResponse', true]);
-		const base = 'src/platform/Foundation';
-		assert.match(await read(`${base}/Response/ApiResponse.ts`), /interface IApiResponse<TData, TMeta = unknown>/);
-		assert.match(await read(`${base}/Datasource/ApiDatasource.ts`), /implements IApiDatasource/);
-		assert.match(await read(`${base}/Datasource/ApiDatasource.ts`), /CreateRequestCallbackType<IApiResponse<TData, TMeta>>/);
-		const provider = await read(`${base}/Provider/HttpProvider.ts`);
+		await run('scaffolds/createResponse.ts', ['ApiDatasource', 'Api', true]);
+		await run('scaffolds/createDatasource.ts', ['ApiDatasource', 'ApiResponse', true]);
+		const base = 'src/app/ApplicationCore';
+		assert.match(await read(`${base}/Http/ApiDatasource/ApiResponse.ts`), /interface IApiResponse<TData, TMeta = unknown>/);
+		assert.match(await read(`${base}/Http/ApiDatasource/Datasource.ts`), /implements IApiDatasource/);
+		assert.match(await read(`${base}/Http/ApiDatasource/Datasource.ts`), /CreateRequestCallbackType<IApiResponse<TData, TMeta>>/);
+		const provider = await read(`${base}/Http/ApiDatasource/HttpProvider.ts`);
 		assert.match(provider, /CreateServiceContainer/);
 		assert.match(provider, /prefixUrl: ''/);
-		await run('scaffolds/createDatasource.ts', ['Other', 'ApiResponse', true]);
-		assert.equal(await read(`${base}/Provider/HttpProvider.ts`), provider);
+		await run('scaffolds/createDatasource.ts', ['__new__', 'Other', true, 'Api', true, 'ApiResponse', true]);
+		assert.equal(await read(`${base}/Http/ApiDatasource/HttpProvider.ts`), provider);
 		await run('scaffolds/createCookieInstance.ts');
-		assert.match(await read(`${base}/Cookie/Instance.ts`), /UniversalCookie.createInstance/);
+		assert.match(await read(`${base}/Cookies/Instance.ts`), /UniversalCookie.createInstance/);
 	}));
 
 test('middleware and error handler scaffolds use kit types and preserve Bootstrap', () =>
 	fixture(async () => {
 		await run('scaffolds/createProgram.ts');
-		const bootstrap = 'src/platform/Bootstrap/Bootstrap.ts';
+		const bootstrap = 'src/bootstrap/index.ts';
 		await fs.writeFile(bootstrap, '// custom bootstrap');
-		await run('scaffolds/createMiddleware.ts', ['Auth']);
-		await run('scaffolds/createErrorHandler.ts');
+		const logs = [];
+		const originalLog = console.log;
+		console.log = (...values) => logs.push(values.join(' '));
+		try {
+			await run('scaffolds/createMiddleware.ts', ['Auth']);
+			await run('scaffolds/createErrorHandler.ts');
+		} finally {
+			console.log = originalLog;
+		}
+		const guidance = logs.join('\n');
+		assert.match(guidance, /new ClientMiddlewareManager/);
+		assert.match(guidance, /new ServerMiddlewareManager/);
+		assert.match(guidance, /useServerError\(ErrorHandler\)/);
+		assert.doesNotMatch(guidance, /useMiddlewares|useAzureNetKitError/);
 		for (const side of ['Client', 'Server']) {
-			const content = await read(`src/platform/Bootstrap/Pipelines/Middlewares/Auth/${side}.ts`);
+			const content = await read(`src/bootstrap/Pipelines/Middlewares/Auth/${side}.ts`);
 			assert.match(content, new RegExp(`implements I${side}Middleware`));
 			assert.match(content, /return next\(\)/);
 		}
-		assert.match(await read('src/platform/Bootstrap/Handlers/ErrorHandler.ts'), /AppAzureNetKitErrorContext/);
-		assert.match(await read('src/platform/Bootstrap/Handlers/ErrorHandler.ts'), /error.toPlainObject\(\)/);
+		assert.match(await read('src/bootstrap/Handlers/ErrorHandler.ts'), /AppServerErrorContext/);
+		assert.match(await read('src/bootstrap/Handlers/ErrorHandler.ts'), /void error/);
 		assert.equal(await read(bootstrap), '// custom bootstrap');
 	}));
 
-test('generated foundation and bootstrap types compile against actual kit declarations', () =>
+test('generated application core and bootstrap types compile against actual kit declarations', () =>
 	fixture(async (dir) => {
-		await run('scaffolds/createResponse.ts', ['Api', true]);
-		await run('scaffolds/createResponse.ts', ['Plain', false]);
-		await run('scaffolds/createDatasource.ts', ['Api', 'ApiResponse', true]);
-		await run('scaffolds/createDatasource.ts', ['Plain', 'PlainResponse', false]);
-		await run('scaffolds/createDatasource.ts', ['Raw', '', false]);
+		await run('scaffolds/createResponse.ts', ['ApiDatasource', 'Api', true]);
+		await run('scaffolds/createResponse.ts', ['__new__', 'Plain', 'Plain', false]);
+		await run('scaffolds/createDatasource.ts', ['ApiDatasource', 'ApiResponse', true]);
+		await run('scaffolds/createDatasource.ts', ['PlainDatasource', 'PlainResponse', false]);
+		await run('scaffolds/createDatasource.ts', ['__new__', 'Raw', false, false]);
 		await run('scaffolds/createCookieInstance.ts');
 		await run('scaffolds/createMiddleware.ts', ['Auth']);
 		await run('scaffolds/createErrorHandler.ts');
@@ -274,33 +320,34 @@ test('generated foundation and bootstrap types compile against actual kit declar
 		await createProgram({ translations: true, errorHandler: true });
 		await run('scaffolds/createTranslationManager.ts', ['en, ru', 'en']);
 		await fs.writeFile(
-			'src/platform/Bootstrap/TypecheckWiring.ts',
-			`import { createApp } from '@azure-net/kit';
+			'src/bootstrap/TypecheckWiring.ts',
+			`import { createApp, ClientMiddlewareManager, ServerMiddlewareManager } from '@azure-net/kit';
 import { ErrorHandler } from './Handlers';
 import { TranslationManager } from './Localization';
 import { ClientAuthMiddleware, ServerAuthMiddleware } from './Pipelines/Middlewares';
-export const AppBootstrap = () => createApp(app => app
- .useAzureNetKitError(ErrorHandler)
- .useTranslations(TranslationManager)
- .useClient(({ useMiddlewares }) => { useMiddlewares([ClientAuthMiddleware]); })
- .useServer(async ({ event, resolve, useMiddlewares }) => { await useMiddlewares([ServerAuthMiddleware]); return resolve(event); }));
+export const AppBootstrap = () => createApp(app => {
+ app.useServerError(ErrorHandler);
+ app.useTranslations(TranslationManager);
+ app.useClient(() => { new ClientMiddlewareManager([ClientAuthMiddleware]).execute(); });
+ app.useServer(async ({ event, resolve }) => { await new ServerMiddlewareManager([ServerAuthMiddleware]).execute(); return resolve(event); });
+});
 `
 		);
 		const kit = new URL('../../azure-net-kit/dist/', import.meta.url).pathname;
 		const roots = [
-			'Bootstrap/Bootstrap.ts',
-			'Bootstrap/TypecheckWiring.ts',
-			'../program.ts',
-			'Foundation/Datasource/ApiDatasource.ts',
-			'Foundation/Datasource/PlainDatasource.ts',
-			'Foundation/Datasource/RawDatasource.ts',
-			'Foundation/Provider/HttpProvider.ts',
-			'Foundation/Cookie/Instance.ts',
-			'Foundation/Schema/Schema.ts',
-			'Bootstrap/Handlers/ErrorHandler.ts',
-			'Bootstrap/Pipelines/Middlewares/Auth/Client.ts',
-			'Bootstrap/Pipelines/Middlewares/Auth/Server.ts'
-		].map((file) => path.join(dir, 'src/platform', file));
+			'bootstrap/index.ts',
+			'bootstrap/TypecheckWiring.ts',
+			'program.ts',
+			'app/ApplicationCore/Http/ApiDatasource/Datasource.ts',
+			'app/ApplicationCore/Http/PlainDatasource/Datasource.ts',
+			'app/ApplicationCore/Http/RawDatasource/Datasource.ts',
+			'app/ApplicationCore/Http/ApiDatasource/HttpProvider.ts',
+			'app/ApplicationCore/Cookies/Instance.ts',
+			'app/ApplicationCore/Validation/Schema.ts',
+			'bootstrap/Handlers/ErrorHandler.ts',
+			'bootstrap/Pipelines/Middlewares/Auth/Client.ts',
+			'bootstrap/Pipelines/Middlewares/Auth/Server.ts'
+		].map((file) => path.join(dir, 'src', file));
 		const program = ts.createProgram(roots, {
 			strict: true,
 			noEmit: true,
@@ -310,7 +357,9 @@ export const AppBootstrap = () => createApp(app => app
 			moduleResolution: ts.ModuleResolutionKind.Bundler,
 			baseUrl: dir,
 			paths: {
-				'#platform/*': ['src/platform/*'],
+				'#applicationCore/*': ['src/app/ApplicationCore/*'],
+				'#bootstrap/*': ['src/bootstrap/*'],
+				'#bootstrap': ['src/bootstrap/index.ts'],
 				'@azure-net/kit': [path.join(kit, 'index.d.ts')],
 				'@azure-net/kit/*': [path.join(kit, '*.d.ts'), path.join(kit, '*/index.d.ts')]
 			}
@@ -351,25 +400,25 @@ for (const existing of [false, true]) {
 		fixture(async () => {
 			await fs.writeFile('package.json', JSON.stringify({ type: 'module' }));
 			await fs.writeFile('vite.config.ts', "import { sveltekit } from '@sveltejs/kit/vite'; export default {plugins: [sveltekit()]};");
-			const bootstrap = 'src/platform/Bootstrap/Bootstrap.ts';
+			const bootstrap = 'src/bootstrap/index.ts';
 			if (existing) {
 				await fs.mkdir(path.dirname(bootstrap), { recursive: true });
 				await fs.writeFile(bootstrap, '// existing bootstrap: preserve exactly\n');
 			}
-			await run('install/installFresh.ts', [false, false, false, false, true, true, 'en, ru', 'en', false, false]);
+			await run('install/installFresh.ts', [false, false, false, true, true, 'en, ru', 'en', false, false]);
 			const source = await read(bootstrap);
 			if (existing) assert.equal(source, '// existing bootstrap: preserve exactly\n');
 			else {
 				assert.match(source, /useTranslations\(TranslationManager\)/);
-				assert.match(source, /useAzureNetKitError\(ErrorHandler\)/);
-				assert.match(source, /import \{ TranslationManager \} from '#platform\/Bootstrap\/Localization'/);
-				assert.match(source, /import \{ ErrorHandler \} from '#platform\/Bootstrap\/Handlers'/);
+				assert.match(source, /useServerError\(ErrorHandler\)/);
+				assert.match(source, /import \{ TranslationManager \} from '#bootstrap\/Localization'/);
+				assert.match(source, /import \{ ErrorHandler \} from '#bootstrap\/Handlers'/);
 			}
 			assert.match(await read('src/program.ts'), /AppBootstrap\(\)/);
-			const manager = await read('src/platform/Bootstrap/Localization/TranslationManager.ts');
+			const manager = await read('src/bootstrap/Localization/TranslationManager.ts');
 			assert.match(manager, /new KitTranslationManager\(/);
 			assert.doesNotMatch(manager, /createTranslations/);
-			assert.equal(await read('src/platform/Bootstrap/Localization/Locales/En/index.ts'), 'export default {};\n');
+			assert.equal(await read('src/bootstrap/Localization/Locales/En/index.ts'), 'export default {};\n');
 		}));
 }
 
@@ -390,12 +439,29 @@ test('fresh prints actionable follow-up instructions without modifying an existi
 		}
 		const output = logs.join('\n');
 		assert.match(output, /src\/routes\/\+layout.svelte/);
-		assert.match(output, /import \{ register \} from '\.\.\/program';/);
+		assert.match(output, /import \{ register \} from '#program';/);
 		assert.match(output, /register\(\);/);
 		assert.match(output, /synchronously during layout initialization/);
 		assert.match(output, /Do not put it inside onMount, an effect, or a module script/);
-		assert.match(output, /httpOptions.prefixUrl.*src\/platform\/Foundation\/Provider\/HttpProvider.ts/);
-		assert.match(output, /fill the empty dictionaries.*Bootstrap\/Localization\/Locales/);
+		assert.match(output, /httpOptions.prefixUrl.*src\/app\/ApplicationCore\/Http\/<DatasourceName>\/HttpProvider.ts/);
+		assert.match(output, /fill the empty dictionaries.*bootstrap\/Localization\/Locales/);
 		assert.match(output, /azure-net check project/);
 		assert.equal(await read('src/routes/+layout.svelte'), layout);
 	}));
+
+for (const errorHandler of [false, true]) {
+	for (const translations of [false, true]) {
+		test(`bootstrap uses void statements: errors=${errorHandler}, translations=${translations}`, () =>
+			fixture(async () => {
+				const { default: createBootstrap } = await import(new URL('scaffolds/createBootstrap.ts', sourceRoot));
+				await createBootstrap({ errorHandler, translations });
+				const content = await read('src/bootstrap/index.ts');
+				assert.match(content, /createApp\(\(app\) => \{/);
+				assert.equal(content.includes('app.useServerError(ErrorHandler);'), errorHandler);
+				assert.equal(content.includes('app.useTranslations(TranslationManager);'), translations);
+				assert.equal(content.includes("from '#bootstrap/Handlers'"), errorHandler);
+				assert.equal(content.includes("from '#bootstrap/Localization'"), translations);
+				assert.doesNotMatch(content, /return app|\)\.use/);
+			}));
+	}
+}

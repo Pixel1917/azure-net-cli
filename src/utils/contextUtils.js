@@ -1,28 +1,33 @@
 import fs from 'node:fs/promises';
 import { normalizePascalName } from './architecture.js';
-export { getContextPath, selectContext, selectPresentationWorkspace, discoverContexts, discoverPresentationWorkspaces, normalizePascalName } from './architecture.js';
+export {
+	getContextPath,
+	selectContext,
+	selectPresentationWorkspace,
+	discoverContexts,
+	discoverPresentationWorkspaces,
+	normalizePascalName
+} from './architecture.js';
 export async function getAvailableFiles(dir, pattern = '.ts') {
-    try {
-        return (await fs.readdir(dir))
-            .filter((file) => file.endsWith(pattern) && file !== 'index.ts')
-            .map((file) => file.slice(0, -pattern.length));
-    }
-    catch (error) {
-        if (error.code === 'ENOENT')
-            return [];
-        throw error;
-    }
+	try {
+		return (await fs.readdir(dir))
+			.filter((file) => file.endsWith(pattern) && file !== 'index.ts')
+			.map((file) => file.slice(0, -pattern.length));
+	} catch (error) {
+		if (error.code === 'ENOENT') return [];
+		throw error;
+	}
 }
 export function toPascalCase(str) {
-    return str.trim() ? normalizePascalName(str) : '';
+	return str.trim() ? normalizePascalName(str) : '';
 }
 export function toCamelCase(str) {
-    const pascal = toPascalCase(str);
-    return pascal.charAt(0).toLowerCase() + pascal.slice(1);
+	const pascal = toPascalCase(str);
+	return pascal.charAt(0).toLowerCase() + pascal.slice(1);
 }
 export function toKebabCase(str) {
-    return str
-        .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
-        .replace(/([A-Z])([A-Z][a-z])/g, '$1-$2')
-        .toLowerCase();
+	return str
+		.replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+		.replace(/([A-Z])([A-Z][a-z])/g, '$1-$2')
+		.toLowerCase();
 }

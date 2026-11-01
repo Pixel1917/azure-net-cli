@@ -1,15 +1,15 @@
 import path from 'node:path';
-import { getPlatformPath } from '../utils/architecture.js';
+import { httpSourcePath } from '../utils/httpSources.js';
 import { writeIfNotExists, updateIndexTs } from '../utils/fileUtils.js';
 
 export async function registerDatasource(className: string): Promise<void> {
-	const root = path.join(getPlatformPath(), 'Foundation/Provider');
+	const root = httpSourcePath(className);
 	const created = await writeIfNotExists(
 		path.join(root, 'HttpProvider.ts'),
 		`import { CreateServiceContainer } from '@azure-net/kit';
-import { ${className} } from '#platform/Foundation/Datasource';
+import { ${className} } from './Datasource';
 
-export const HttpProvider = CreateServiceContainer('HttpProvider', {
+export const HttpProvider = CreateServiceContainer('${className}HttpProvider', {
 	register: () => ({
 		${className}: () => new ${className}({ httpOptions: { prefixUrl: '' } })
 	})

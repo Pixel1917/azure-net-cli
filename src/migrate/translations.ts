@@ -1,3 +1,4 @@
+import { migrateAppConfiguration } from './appConfiguration.js';
 import path from 'node:path';
 import ts from 'typescript';
 type Edit = { start: number; end: number; text: string };
@@ -57,8 +58,14 @@ export function migrateTranslationsSources(sources: Map<string, string>, resolve
 		});
 	};
 	let connected = false;
-	for (const [file, input] of sources) {
+	for (const [file, original] of sources) {
 		if (!/\.[jt]s$/.test(file) || !reaches(file)) continue;
+		const normalized = migrateAppConfiguration(original, file);
+		if (normalized.issues.length) {
+			issues.push(...normalized.issues.map((reason) => ({ file, reason })));
+			continue;
+		}
+		const input = normalized.content;
 		const source = ts.createSourceFile(file, input, ts.ScriptTarget.Latest, true);
 		const creators = new Set<string>();
 		for (const stmt of source.statements)
@@ -83,20 +90,18 @@ export function migrateTranslationsSources(sources: Map<string, string>, resolve
 			issues.push({ file, reason: 'Unsupported createApp callback: add useTranslations manually.' });
 			continue;
 		}
-		let body: ts.Expression | undefined = ts.isBlock(callback.body)
-			? callback.body.statements.find(ts.isReturnStatement)?.expression
-			: callback.body;
-		let already = false;
-		while (body && ts.isCallExpression(body) && ts.isPropertyAccessExpression(body.expression)) {
-			if (body.expression.name.text === 'useTranslations') already = true;
-			body = body.expression.expression;
-		}
+		if (!ts.isBlock(callback.body)) continue;
+		const body = callback.body;
+		const already = body.statements.some(
+			(statement) =>
+				ts.isExpressionStatement(statement) &&
+				ts.isCallExpression(statement.expression) &&
+				ts.isPropertyAccessExpression(statement.expression.expression) &&
+				statement.expression.expression.name.text === 'useTranslations'
+		);
 		if (already) {
+			if (input !== original) updates.set(file, input);
 			connected = true;
-			continue;
-		}
-		if (!body || !ts.isIdentifier(body) || body.text !== callback.parameters[0].name.text) {
-			issues.push({ file, reason: 'Unsupported createApp chain: add useTranslations manually.' });
 			continue;
 		}
 		let local = 'MigratedTranslationManager';
@@ -110,9 +115,9 @@ export function migrateTranslationsSources(sources: Map<string, string>, resolve
 		updates.set(
 			file,
 			`import { ${manager.name} as ${local} } from ${JSON.stringify(spec)};\n` +
-				input.slice(0, body.end) +
-				`.useTranslations(${local})` +
-				input.slice(body.end)
+				input.slice(0, body.getStart(source) + 1) +
+				`\n${callback.parameters[0].name.text}.useTranslations(${local});\n` +
+				input.slice(body.getStart(source) + 1)
 		);
 		connected = true;
 	}

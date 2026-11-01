@@ -245,7 +245,7 @@ test('restores originals if an output write fails', async () =>
 		const original = fs.writeFile;
 		let failed = false;
 		fs.writeFile = async (file, ...args) => {
-			if (!failed && file === path.join(root, 'src/platform/Foundation/Datasource/Api.ts')) {
+			if (!failed && file === path.join(root, 'src/app/Contexts/Public/Order/Domain/Resources/Order.ts')) {
 				failed = true;
 				throw new Error('disk failure');
 			}

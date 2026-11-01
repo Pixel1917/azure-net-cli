@@ -9,6 +9,12 @@ Install the CLI as a dev dependency. Node >=22.15 is required. Generation does n
 src/
   program.ts
   app/
+    ApplicationCore/
+      Http/<DatasourceName>/{Datasource.ts,<ResponseName>.ts,HttpProvider.ts,index.ts}
+      Cookies/Instance.ts
+      Validation/Schema.ts
+      Configuration/
+      Services/
     Contexts/
       SharedKernel/{Contracts,Domain}
       Identity/
@@ -26,12 +32,15 @@ src/
           Style/
           Components/{Core,Page,Scopes,Composite}
       Shared/{Scopes,Shell,Ui}
-  platform/
-    Bootstrap/Bootstrap.ts
-    Foundation/{Cookie,Datasource,Response,Schema,Provider}
+  bootstrap/
+    index.ts
+    Localization/
+    Pipelines/Middlewares/
+    Handlers/
+    Routes/
 ```
 
-Fresh structure creates only SharedKernel in Contexts. Aggregates and scopes are created on demand. No empty aggregate, root barrel or ApplicationProvider is generated. Domain barrels expose contracts; presentation scope barrels register class presenters/stores. Components get their own local barrel. Platform is a **sibling** of app, not a child.
+Fresh structure creates only SharedKernel in Contexts. Aggregates and scopes are created on demand. No empty aggregate, root barrel or ApplicationProvider is generated. Domain barrels expose contracts; presentation scope barrels register class presenters/stores. Components get their own local barrel. ApplicationCore is inside app; bootstrap is a **sibling** of app.
 
 ```ts
 export default {
@@ -44,11 +53,11 @@ export default {
 
 `presentationWorkspaces` is accepted as a fallback for existing configuration. `appBoundaries` takes precedence. Shared is always included. Existing directories are discovered from disk; configuration supplies initial/additional boundaries. Contexts are not listed in configuration.
 
-Imports use package.json subpath imports: `#contexts/*`, `#presentation/*`, `#platform/*`. Custom mappings are not silently overwritten. Existing mappings to the previous architecture must be migrated first.
+Imports use package.json subpath imports: `#applicationCore/*`, `#contexts/*`, `#presentation/*`, `#bootstrap` (`src/bootstrap/index.ts`), `#bootstrap/*`, and `#program` (`src/program.ts`). Custom mappings are not silently overwritten. Existing mappings to the previous architecture must be migrated first.
 
 ## Installation and maintenance
 
-- `azure-net install fresh`: creates structure, configures AzureNetPlugin, creates Bootstrap.ts and program.ts; offers optional Foundation artifacts, translations, error handler, Prettier configuration and Git hooks. No middleware is created by default.
+- `azure-net install fresh`: creates structure, configures AzureNetPlugin, creates src/bootstrap/index.ts and program.ts; offers optional ApplicationCore artifacts, translations, error handler, Prettier configuration and Git hooks. No middleware is created by default.
 - `azure-net folders-update`: adds missing directories, including boundaries newly added to config. Preserves existing files and boundaries.
 - `azure-net prettier-config`: replaces the recommended Prettier configuration without installing packages.
 - `azure-net git-hooks add`: adds `azure-net check project` to the pre-commit workflow, preserving unrelated hook code. Disables the redundant pre-push check in configuration.
@@ -56,19 +65,21 @@ Imports use package.json subpath imports: `#contexts/*`, `#presentation/*`, `#pl
 - `azure-net commit`: interactive staged commit, with optional body and breaking-change information.
 - `azure-net push [--no-check]`: optional checks, git add, interactive commit, git push. Checks default to enabled unless disabled in configuration.
 
-The old `add`, `init`, and `create` commands are removed. Use `prettier-config`, `folders-update`, `install fresh`, `foundation`, and `bootstrap` instead.
+The old `add`, `init`, and `create` commands are removed. Use `prettier-config`, `folders-update`, `install fresh`, `core`, and `bootstrap` instead.
 
-## Foundation
+## ApplicationCore (`core`)
+
+The intended command group is `core`; verify availability with `azure-net core --help` in the installed CLI version.
 
 ```sh
-azure-net foundation schema
-azure-net foundation schema-rule
-azure-net foundation response
-azure-net foundation datasource
-azure-net foundation cookie-instance
+azure-net core schema
+azure-net core schema-rule
+azure-net core response
+azure-net core datasource
+azure-net core cookie-instance
 ```
 
-Datasource and response templates expose interfaces as well as classes. Repositories depend on the datasource interface. Datasource creation offers an HttpProvider in Foundation/Provider; configure its empty prefixUrl before using it. The provider owns datasource construction, not repositories or use cases. Schema generation records defaultSchemaFactory in config.
+Datasource and response templates expose interfaces as well as classes. Repositories depend on the datasource interface. Datasource creation offers an HttpProvider in `src/app/ApplicationCore/Http/<DatasourceName>/HttpProvider.ts`; configure its empty prefixUrl before using it. The provider owns datasource construction, not repositories or use cases. Schema generation records defaultSchemaFactory in config.
 
 ## Bootstrap
 
@@ -78,7 +89,25 @@ azure-net bootstrap middleware
 azure-net bootstrap error-handler
 ```
 
-Translations use TranslationManager and `.useTranslations(manager)`. Middleware generation produces a client and server class with `execute` returning `next()`, under Bootstrap/Pipelines/Middlewares/Name. Delete the unused variant. For an existing customized Bootstrap.ts, commands print wiring instructions rather than rewriting arbitrary application logic. Fresh installation can compose Bootstrap.ts automatically.
+Translations use TranslationManager and `.useTranslations(manager)`. Middleware generation produces a client and server class with `execute` returning `next()`, under bootstrap/Pipelines/Middlewares/Name. Delete the unused variant. For an existing customized src/bootstrap/index.ts, commands print wiring instructions rather than rewriting arbitrary application logic. Fresh installation can compose src/bootstrap/index.ts automatically:
+
+```ts
+import { createApp } from '@azure-net/kit';
+import { ErrorHandler } from '#bootstrap/Handlers';
+import { TranslationManager } from '#bootstrap/Localization';
+
+export const AppBootstrap = () =>
+	createApp((app) => {
+		app.useServerError(ErrorHandler);
+		app.useTranslations(TranslationManager);
+	});
+```
+
+Declined optional features omit their import and registration. The synchronous configurator returns void, as do all methods on the public `AppConfiguration` interface: do not chain calls or return `app`. Duplicate registrations are rejected at runtime (not excluded by types); configuration closes after the callback. Async configurators and returned thenables are rejected. Hook callbacks retain their own async/return contracts.
+
+Migration splits known direct `createApp` chains into statements while preserving hook bodies, return values and registration order. Unsupported/async configurators are reported for manual review rather than rewritten speculatively.
+
+Use `ClientMiddlewareManager` / `ServerMiddlewareManager` in `src/bootstrap/Pipelines/Middlewares/index.ts`. Call the client manager from `beforeNavigate` in `useClient`; await the server manager in `useServer` before returning `resolve(event)`. Error-handler scaffolds use `AppServerErrorContext` and `.useServerError(ErrorHandler)`, with a placeholder for server error reporting; sanitize any public payload you add.
 
 ## Generators
 
@@ -100,7 +129,7 @@ The aggregate is selected **inside a context**. Resources describe responses; DT
 
 Composition.ts uses CompositionRoot at context level. Automatic composition wiring is optional; custom composition logic must not be overwritten merely to add another aggregate.
 
-Routes are generated into `src/platform/Bootstrap/Routes/index.ts`. Repeated generation replaces the generated route list. Grouping produces separate arrays, not a runtime groups object.
+Routes are generated into `src/bootstrap/Routes/index.ts`. Repeated generation replaces the generated route list. Grouping produces separate arrays, not a runtime groups object.
 
 ### Components
 
@@ -115,6 +144,8 @@ azure-net generate component composition
 
 ## Checks
 
+ApplicationCore is importable everywhere, but must not import Contexts or Presentation. Imports of bootstrap (including `#bootstrap`, `#bootstrap/*` and relative paths) are allowed only from `src/routes`, `src/program.ts`, and within `src/bootstrap`; ApplicationCore, Contexts and Presentation must not import it.
+
 `azure-net check project` runs the optional read-only `format:check` script, architectural checks, lint and type checking. It never runs the potentially mutating `format` script. `azure-net check internal` runs only the CLI architectural checks. Individual commands include domain, imports, folders-structure, layer-imports, layer-boundaries, hooks, provider-graph, provider-names and presenter-names.
 
 - Contexts cannot import other contexts. Aggregates in one context can cooperate. SharedKernel is importable from contexts, never the reverse.
@@ -122,6 +153,7 @@ azure-net generate component composition
 - App directory names use PascalCase letters/digits. Framework filenames outside app retain their framework conventions.
 - Consts, utils and common directories are forbidden (case-insensitive). Shared is reserved for Presentation/Shared.
 - Context interfaces use I prefix. Resources, enums, repositories, use cases and presenters have their corresponding suffixes. Application/Services and Infrastructure services remain supported.
+- Enum declarations always require the Enum suffix. Their filenames require it only inside Enums directories (including nested directories); auxiliary enums may share a response or other file. Export-only index.ts barrels remain allowed.
 - Presenter classes are identified by a Presenters directory, a class name ending in Presenter, or an exported class in a Presenter file. Other scope helpers/stores are not presenters; RegisterProvider does not imply a presenter.
 - Standalone files in Domain/Resources require the Resource suffix. Inside a specific *Resource directory, constituent types (such as Blocks/AccordionBlock.ts) do not. A *Resource.ts file must export a Resource class/interface/type, but may also declare supporting types without that suffix. Interface I prefixes still apply to all parts.
 - Repository/use-case dependencies are typed by interfaces; presenter use-case dependencies are interfaces too. Inferred cookie/storage instances and presenter stores are not indiscriminately rejected.

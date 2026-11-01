@@ -1,9 +1,9 @@
 import path from 'node:path';
-import { getPlatformPath } from '../utils/architecture.js';
+import { getApplicationCorePath } from '../utils/architecture.js';
 import { writeIfNotExists, updateIndexTs } from '../utils/fileUtils.js';
 
 export default async function createCookieInstance(): Promise<void> {
-	const root = path.join(getPlatformPath(), 'Foundation/Cookie');
+	const root = path.join(getApplicationCorePath(), 'Cookies');
 	await writeIfNotExists(
 		path.join(root, 'Instance.ts'),
 		`import { UniversalCookie } from '@azure-net/kit';

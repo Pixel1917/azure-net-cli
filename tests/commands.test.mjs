@@ -9,8 +9,8 @@ function run(...args) {
 test('published CLI exposes new commands and removes legacy command groups', () => {
 	const help = run('--help');
 	assert.equal(help.status, 0, help.stderr);
-	for (const name of ['prettier-config', 'folders-update', 'foundation', 'bootstrap', 'git-hooks']) assert.ok(help.stdout.includes(name));
-	for (const name of ['add', 'init', 'create']) {
+	for (const name of ['prettier-config', 'folders-update', 'core', 'bootstrap', 'git-hooks']) assert.ok(help.stdout.includes(name));
+	for (const name of ['add', 'init', 'create', 'foundation']) {
 		const result = run(name);
 		assert.notEqual(result.status, 0);
 		assert.match(result.stderr, /unknown command/);

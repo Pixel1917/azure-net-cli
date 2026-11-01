@@ -1,3 +1,4 @@
+import { migrateAppConfiguration } from './appConfiguration.js';
 import { migrateCurrentApis } from './currentApis.js';
 import { migrateCompositionSource } from './composition.js';
 import { migratePresenterLayout } from './presenterLayout.js';
@@ -39,7 +40,15 @@ function knownPlatformImport(value: unknown): boolean {
 	return !!value && typeof value === 'object' && Object.keys(value).length > 0 && Object.values(value).every(knownPlatformImport);
 }
 function knownArchitectureImport(key: string, value: unknown): boolean {
-	const base = key.startsWith('#contexts') ? './src/app/Contexts' : './src/app/Presentation';
+	const base = key.startsWith('#contexts')
+		? './src/app/Contexts'
+		: key.startsWith('#applicationCore')
+			? './src/app/ApplicationCore'
+			: key.startsWith('#bootstrap')
+				? './src/bootstrap'
+				: key === '#program'
+					? './src/program.ts'
+					: './src/app/Presentation';
 	if (typeof value === 'string') return ['', '/index.ts', '/*', '/*.ts', '/*/index.ts'].some((suffix) => value === base + suffix);
 	if (Array.isArray(value)) return value.length > 0 && value.every((item) => knownArchitectureImport(key, item));
 	return (
@@ -89,6 +98,8 @@ export async function planMigration(root = process.cwd()): Promise<MigrationPlan
 	root = path.resolve(root);
 	const app = path.join(root, 'src/app');
 	const platform = path.join(root, 'src/platform');
+	const applicationCore = path.join(app, 'ApplicationCore');
+	const bootstrap = path.join(root, 'src/bootstrap');
 	const originals = new Map<string, Buffer>();
 	for (const file of await files(path.join(root, 'src'))) originals.set(file, await fs.readFile(file));
 	for (const name of [
@@ -123,6 +134,9 @@ export async function planMigration(root = process.cwd()): Promise<MigrationPlan
 		['$lib', path.join(root, 'src/lib')],
 		['$program', path.join(root, 'src/program.ts')],
 		['#platform', platform],
+		['#applicationCore', applicationCore],
+		['#bootstrap', bootstrap],
+		['#program', path.join(root, 'src/program.ts')],
 		['#contexts', path.join(app, 'Contexts')],
 		['#presentation', path.join(app, 'Presentation')]
 	]);
@@ -131,7 +145,7 @@ export async function planMigration(root = process.cwd()): Promise<MigrationPlan
 		const relative = slash(path.relative(app, file));
 		if (relative.startsWith('../')) continue;
 		const first = relative.split('/')[0]!;
-		if (!['Contexts', 'Presentation', 'Platform'].includes(first)) oldRoots.add(first);
+		if (!['Contexts', 'Presentation', 'Platform', 'ApplicationCore'].includes(first)) oldRoots.add(first);
 	}
 	for (const folder of oldRoots) aliases.set(`$${folder}`, path.join(app, folder));
 	const svelteConfig = [...originals.keys()].find((p) => /svelte\.config\.(?:js|ts|mjs)$/.test(p));
@@ -200,8 +214,76 @@ export async function planMigration(root = process.cwd()): Promise<MigrationPlan
 	}
 	const backup = (file: string, why: string): string => {
 		issue(file, why);
-		return path.join(app, '.backup', path.relative(app, file));
+		const relative = file.startsWith(app + path.sep) ? path.relative(app, file) : path.join('_project', path.relative(root, file));
+		return path.join(app, '.backup', relative);
 	};
+	const platformSources = new Map<string, string>();
+	for (const file of originals.keys()) {
+		const relative = slash(path.relative(root, file));
+		const modern = relative.match(/^src\/(?:platform|app\/Platform)\/(.*)$/);
+		const legacy = relative.match(/^src\/app\/[^/]+\/(?:essentials|internal)\/foundation\/(?:constructs\/)?(.*)$/);
+		if (modern) platformSources.set(file, modern[1]!);
+		else if (legacy) platformSources.set(file, 'Foundation/' + partsPath(legacy[1]!.split('/')));
+	}
+	const datasourceNames = new Map<string, string>();
+	for (const [file, relative] of platformSources) {
+		const name = path.basename(relative).replace(/\.[jt]s$/, '');
+		if (name.endsWith('Datasource') && name !== 'Datasource') datasourceNames.set(file, name);
+		else if (name === 'Datasource' && relative.includes('/Http/')) datasourceNames.set(file, relative.split('/').at(-2)!);
+	}
+	const importsByFile = new Map<string, Set<string>>();
+	for (const file of platformSources.keys()) {
+		const imported = new Set<string>();
+		const collect = (node: ts.Node): void => {
+			if (
+				(ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+				node.moduleSpecifier &&
+				ts.isStringLiteral(node.moduleSpecifier)
+			) {
+				const source = resolve(file, node.moduleSpecifier.text);
+				if (source) imported.add(source);
+			}
+			ts.forEachChild(node, collect);
+		};
+		collect(parseSource(originals.get(file)!.toString(), file));
+		importsByFile.set(file, imported);
+	}
+	function platformDestination(relative: string, file: string): string | undefined {
+		if (relative.startsWith('Bootstrap/')) {
+			const entry = relative.slice('Bootstrap/'.length).replace(/^Bootstrap\.(ts|js)$/, 'index.$1');
+			return path.join(bootstrap, entry);
+		}
+		const rest = relative.replace(/^Foundation\//, '').split('/');
+		const category = rest[0]!;
+		if (category === 'Http') return path.join(applicationCore, ...rest);
+		const categories: Record<string, string> = {
+			Config: 'Configuration',
+			Configuration: 'Configuration',
+			Cookie: 'Cookies',
+			Cookies: 'Cookies',
+			Schema: 'Validation',
+			Validation: 'Validation',
+			Services: 'Services'
+		};
+		if (categories[category]) return path.join(applicationCore, categories[category]!, ...rest.slice(1));
+		if (['Datasource', 'Datasources', 'Response', 'Responses', 'Provider', 'Providers'].includes(category)) {
+			const own = datasourceNames.get(file);
+			const referenced = [...datasourceNames].filter(
+				([source]) =>
+					importsByFile.get(file)?.has(source) || (['Response', 'Responses'].includes(category) && importsByFile.get(source)?.has(file))
+			);
+			const candidates = [...new Set((referenced.length ? referenced : [...datasourceNames]).map(([, name]) => name))];
+			const name = own ?? (candidates.length === 1 ? candidates[0] : undefined);
+			if (
+				!name ||
+				/^index\./.test(rest.at(-1)!) ||
+				(['Provider', 'Providers'].includes(category) && !/^HttpProvider\.[jt]s$/.test(rest.at(-1)!))
+			)
+				return undefined;
+			return path.join(applicationCore, 'Http', name, own ? 'Datasource' + path.extname(file) : rest.at(-1)!);
+		}
+		return undefined;
+	}
 	for (const file of originals.keys()) {
 		const rel = slash(path.relative(app, file));
 		const p = rel.split('/');
@@ -209,8 +291,12 @@ export async function planMigration(root = process.cwd()): Promise<MigrationPlan
 			const converted = migrateCompositionSource(originals.get(file)!.toString(), p[1]);
 			if (converted) compositions.set(file, converted);
 		}
-		if (p[0] === 'Platform') {
-			mapping.set(file, path.join(platform, ...p.slice(1)));
+		if (platformSources.has(file)) {
+			mapping.set(
+				file,
+				platformDestination(platformSources.get(file)!, file) ??
+					backup(file, 'ApplicationCore ownership is ambiguous; source retained for manual migration.')
+			);
 			continue;
 		}
 		if (p[0] === 'Contexts' && p[1] !== 'SharedKernel' && ['Domain', 'Application', 'Infrastructure'].includes(p[2]!)) {
@@ -283,11 +369,12 @@ export async function planMigration(root = process.cwd()): Promise<MigrationPlan
 		} catch {
 			/* Invalid names are archived instead of guessed. */
 		}
+		const platformTarget = dest?.startsWith('Platform/') ? platformDestination(dest.slice('Platform/'.length), file) : undefined;
 		mapping.set(
 			file,
 			dest
 				? dest.startsWith('Platform/')
-					? path.join(platform, dest.slice('Platform/'.length))
+					? (platformTarget ?? backup(file, 'ApplicationCore ownership is ambiguous; source retained for manual migration.'))
 					: path.join(app, dest)
 				: backup(file, 'No unambiguous target (legacy provider, aggregate barrel, or unsupported folder).')
 		);
@@ -317,13 +404,19 @@ export async function planMigration(root = process.cwd()): Promise<MigrationPlan
 			const value = slash(path.relative(path.dirname(from), to));
 			return (value.startsWith('.') ? value : './' + value).replace(/\.(?:ts|js)$/, '').replace(/\/index$/, '');
 		};
-		if (to.startsWith(platform + path.sep))
-			return packageImports['#platform/*'] && !knownPlatformImport(packageImports['#platform/*'])
+		if (to === path.join(root, 'src/program.ts'))
+			return packageImports['#program'] && !knownArchitectureImport('#program', packageImports['#program'])
 				? relativeSpecifier()
-				: ('#platform/' + slash(path.relative(platform, to))).replace(/\.(?:ts|js)$/, '').replace(/\/index$/, '');
+				: '#program';
+		if (to.startsWith(bootstrap + path.sep)) {
+			const key = /^index\.[jt]s$/.test(path.relative(bootstrap, to)) ? '#bootstrap' : '#bootstrap/*';
+			return packageImports[key] && !knownArchitectureImport('#bootstrap', packageImports[key])
+				? relativeSpecifier()
+				: ('#bootstrap/' + slash(path.relative(bootstrap, to))).replace(/\.(?:ts|js)$/, '').replace(/\/index$/, '');
+		}
 		let value: string;
 		const first = relative.split('/')[0]!;
-		const prefix: Record<string, string> = { Contexts: '#contexts', Presentation: '#presentation', Platform: '#platform' };
+		const prefix: Record<string, string> = { Contexts: '#contexts', Presentation: '#presentation', ApplicationCore: '#applicationCore' };
 		if (
 			prefix[first] &&
 			packageImports[prefix[first] + '/*'] &&
@@ -559,6 +652,12 @@ export async function planMigration(root = process.cwd()): Promise<MigrationPlan
 	);
 	for (const [file, content] of translationMigration.updates) upgradedSources.set(file, content);
 	for (const problem of translationMigration.issues) issue(problem.file, problem.reason);
+	for (const [file, bytes] of originals) {
+		if (!/\.[jt]s$/.test(file) || isBackup(mapping.get(file) ?? file)) continue;
+		const result = migrateAppConfiguration(upgradedSources.get(file) ?? bytes.toString(), file);
+		if (result.content !== bytes.toString()) upgradedSources.set(file, result.content);
+		for (const reason of result.issues) issue(file, reason);
+	}
 
 	for (const [file, bytes] of originals) {
 		if (!/\.[jt]s$/.test(file) || isBackup(mapping.get(file) ?? file)) continue;
@@ -816,7 +915,7 @@ export async function planMigration(root = process.cwd()): Promise<MigrationPlan
 	for (const [file, bytes] of originals) {
 		if (!file.startsWith(path.join(root, 'src') + path.sep)) continue;
 		const to = mapping.get(file) ?? file;
-		if (!mapping.size && !oldRoots.size && !upgradedSources.size) continue;
+		if (!mapping.size && !oldRoots.size && !upgradedSources.size && !platformSources.size) continue;
 		const output =
 			isBackup(to) || !textFile.test(file) ? bytes : Buffer.from(rewrite(file, to, upgradedSources.get(file) ?? bytes.toString()));
 		if (writes.has(to) && path.basename(to) === 'index.ts') {
@@ -833,6 +932,7 @@ export async function planMigration(root = process.cwd()): Promise<MigrationPlan
 	if (
 		oldRoots.size ||
 		mapping.size ||
+		platformSources.size ||
 		Object.entries(packageImports).some(
 			([key, value]) => key.startsWith('#platform') && knownPlatformImport(value) && JSON.stringify(value).includes('./src/app/Platform')
 		)
@@ -860,22 +960,17 @@ export async function planMigration(root = process.cwd()): Promise<MigrationPlan
 		if (json.imports != null && (typeof json.imports !== 'object' || Array.isArray(json.imports)))
 			throw new Error('Expected package.json imports object');
 		const imports = { ...json.imports };
-		const relocate = (value: unknown): unknown => {
-			if (typeof value === 'string') return value.replace(/^\.\/src\/app\/Platform(?=\/|$)/, './src/platform');
-			if (Array.isArray(value)) return value.map(relocate);
-			if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, relocate(item)]));
-			return value;
-		};
-		// Upgrade a known old bare alias only when it already exists; never invent root barrels.
+		// Keep old aliases only while retained legacy files still need them.
+		const retainedPlatform = [...platformSources.keys()].some((file) => !mapping.has(file));
+		for (const key of ['#platform', '#platform/*']) {
+			if (!(key in imports)) continue;
+			if (knownPlatformImport(imports[key]) && !retainedPlatform) delete imports[key];
+			else issue(packageFile, `Legacy package import ${key} retained; review remaining platform sources manually.`);
+		}
 		const expectedImports: Record<string, unknown> = { ...PACKAGE_IMPORTS };
-		if ('#platform' in imports) expectedImports['#platform'] = './src/platform/index.ts';
 		for (const [key, expected] of Object.entries(expectedImports)) {
-			const target = key.startsWith('#platform') ? relocate(expected) : expected;
-			if (!(key in imports)) imports[key] = target;
-			else if (key === '#platform' || key === '#platform/*') {
-				if (knownPlatformImport(imports[key])) imports[key] = relocate(imports[key]);
-				else issue(packageFile, `Custom package import ${key} retained; review relocated platform paths manually.`);
-			} else if (!knownArchitectureImport(key, imports[key])) issue(packageFile, `Custom package import ${key} retained.`);
+			if (!(key in imports)) imports[key] = expected;
+			else if (!knownArchitectureImport(key, imports[key])) issue(packageFile, `Custom package import ${key} retained.`);
 		}
 		const content = Buffer.from(JSON.stringify({ ...json, imports }, null, '\t') + '\n');
 		if (!originals.get(packageFile)?.equals(content)) writes.set(packageFile, content);
@@ -891,6 +986,9 @@ export async function planMigration(root = process.cwd()): Promise<MigrationPlan
 		let base = value.startsWith('.') ? path.resolve(path.dirname(file), value) : undefined;
 		for (const [prefix, directory] of [
 			['#platform', platform],
+			['#applicationCore', applicationCore],
+			['#bootstrap', bootstrap],
+			['#program', path.join(root, 'src/program.ts')],
 			['#contexts', path.join(app, 'Contexts')],
 			['#presentation', path.join(app, 'Presentation')]
 		] as const)

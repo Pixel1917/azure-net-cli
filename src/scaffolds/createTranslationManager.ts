@@ -19,7 +19,7 @@ const createTranslationManagerTemplate = (defaultLocale: string): string => `imp
 import { TranslationManager as KitTranslationManager } from '@azure-net/kit/i18n';
 import type { Path } from '@azure-net/kit/i18n';
 
-// Bootstrap/Bootstrap.ts: app.useTranslations(TranslationManager)
+// bootstrap/index.ts: app.useTranslations(TranslationManager)
 export const TranslationManager = new KitTranslationManager({
 \tmessages,
 \tinitLang: '${defaultLocale}',
@@ -77,7 +77,7 @@ export default async function createTranslationManager(): Promise<void> {
 		await writeIfNotExists(path.join(localeDir, 'index.ts'), createLocaleTemplate());
 	}
 	console.log(
-		"In Bootstrap/Bootstrap.ts, import { TranslationManager } from '#platform/Bootstrap/Localization' and call app.useTranslations(TranslationManager). Existing Bootstrap preserved."
+		"In bootstrap/index.ts, import { TranslationManager } from '#bootstrap/Localization' and call app.useTranslations(TranslationManager). Existing Bootstrap preserved."
 	);
 
 	console.log(`✅ Translation manager created: ${translationRoot}`);

@@ -2,8 +2,15 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import prompts from 'prompts';
 import ts from 'typescript';
-import { getAggregatePath, getPlatformPath, selectAggregate, discoverContexts, ensureContextStructure } from '../../utils/architecture.js';
+import {
+	getAggregatePath,
+	getApplicationCorePath,
+	selectAggregate,
+	discoverContexts,
+	ensureContextStructure
+} from '../../utils/architecture.js';
 export { selectAggregate };
+import { discoverHttpSources, httpSourcePath, httpSourceImport } from '../../utils/httpSources.js';
 import { toCamelCase, toPascalCase } from '../../utils/contextUtils.js';
 import { updateIndexTs, writeIfNotExists } from '../../utils/fileUtils.js';
 
@@ -119,7 +126,7 @@ export const getConfigState = async (): Promise<{ contexts: ContextConfig[]; sha
 	} catch {
 		/* A new project may not contain any contexts yet. */
 	}
-	return { contexts, sharedAlias: '#platform', sharedContextName: 'Platform' };
+	return { contexts, sharedAlias: '#applicationCore', sharedContextName: 'ApplicationCore' };
 };
 
 export const selectContext = async (message = 'Select context:'): Promise<string | null> => {
@@ -155,7 +162,7 @@ export const resolveRepositoriesPath = (contextName: string, aggregate = context
 	path.join(getAggregatePath(contextName, aggregate), 'Infrastructure/Repositories');
 export const resolveDatasourcesPath = (...compatibility: [contextName?: string]): string => {
 	void compatibility;
-	return path.join(getPlatformPath(), 'Foundation/Datasource');
+	return path.join(getApplicationCorePath(), 'Http');
 };
 export const resolveSharedDatasourcesPath = async (): Promise<string> => resolveDatasourcesPath();
 export const resolveDomainRootPath = (contextName: string, aggregate = contextName): string =>
@@ -176,12 +183,12 @@ export const getAvailableTsNames = async (targetPath: string): Promise<string[]>
 
 export const resolveDatasource = async (name: string): Promise<DatasourceInfo> => {
 	const normalized = toPascalCase(name);
-	const file = path.join(resolveDatasourcesPath(), normalized + '.ts');
+	const file = path.join(httpSourcePath(normalized), 'Datasource.ts');
 	let text: string;
 	try {
 		text = await fs.readFile(file, 'utf8');
 	} catch {
-		throw new Error('Datasource file not found: ' + file + '. Create it with foundation datasource.');
+		throw new Error('Datasource file not found: ' + file + '. Create it with core datasource.');
 	}
 	const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
 	const interfaceName = 'I' + normalized;
@@ -192,20 +199,20 @@ export const resolveDatasource = async (name: string): Promise<DatasourceInfo> =
 		!source.statements.some((n) => ts.isClassDeclaration(n) && n.name?.text === normalized && exported(n))
 	)
 		throw new Error('Datasource must export class ' + normalized + ' and interface ' + interfaceName + ': ' + file);
-	return { name: normalized, interfaceName, importPath: '#platform/Foundation/Datasource/' + normalized };
+	return { name: normalized, interfaceName, importPath: httpSourceImport(normalized) };
 };
 
 export const selectDatasource = async (...compatibility: [contextName?: string]): Promise<DatasourceInfo | null> => {
 	void compatibility;
-	const names = (await getAvailableTsNames(await resolveSharedDatasourcesPath())).filter((name) => name.endsWith('Datasource'));
+	const names = await discoverHttpSources();
 	if (!names.length) {
-		console.error('No datasources found in platform/Foundation/Datasource. Create a Foundation datasource first.');
+		console.error('No datasources found in app/ApplicationCore/Http. Create a core datasource first.');
 		return null;
 	}
 	const { datasource } = await prompts({
 		type: 'select',
 		name: 'datasource',
-		message: 'Select Foundation datasource:',
+		message: 'Select HTTP datasource:',
 		choices: names.map((name) => ({ title: name, value: name })),
 		initial: 0
 	});
@@ -656,10 +663,11 @@ export const ensureDomainScaffold = async (contextName: string, aggregate = cont
 export const printApplicationProviderWiring = (context: string, repository: string, datasource: string, aggregate = context): void => {
 	const meta = getRepositoryMeta(repository);
 	console.log(`Wire #contexts/${context}/Composition.ts:
+import { HttpProvider as ${datasource}HttpProvider } from '${httpSourceImport(datasource)}';
 import { ${meta.className} } from '#contexts/${context}/${aggregate}/Infrastructure/Repositories/${meta.className}';
 import { ${meta.useCasesClassName} } from '#contexts/${context}/${aggregate}/Application/UseCases/${meta.useCasesClassName}';
-// dependsOn: { HttpProvider }, register: ({ HttpProvider }) => ({
-// ${meta.useCasesClassName}: () => new ${meta.useCasesClassName}(new ${meta.className}(HttpProvider.${datasource}))
+// dependsOn: { ${datasource}HttpProvider }, register: ({ ${datasource}HttpProvider }) => ({
+// ${meta.useCasesClassName}: () => new ${meta.useCasesClassName}(new ${meta.className}(${datasource}HttpProvider.${datasource}))
 // })
 `);
 };

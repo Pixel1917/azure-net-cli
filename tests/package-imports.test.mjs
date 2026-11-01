@@ -22,10 +22,32 @@ test('initialization writes imports only, preserves Vite byte-for-byte and is id
 		assert.equal(await fs.readFile('vite.config.ts', 'utf8'), vite);
 		const { imports } = JSON.parse(first);
 		assert.equal(imports['#custom/*'], './custom/*');
+		assert.equal(imports['#applicationCore/*'].default, './src/app/ApplicationCore/*');
+		assert.equal(imports['#bootstrap/*'].default, './src/bootstrap/*');
+		assert.equal(imports['#bootstrap'], './src/bootstrap/index.ts');
+		assert.equal(imports['#program'], './src/program.ts');
+		assert.equal(imports['#applicationCore'], undefined);
+		assert.equal(imports['#platform/*'], undefined);
+		for (const file of [
+			'app/ApplicationCore/Http/ApiDatasource/index.ts',
+			'bootstrap/index.ts',
+			'bootstrap/Handlers/index.ts',
+			'program.ts'
+		]) {
+			await fs.mkdir(path.dirname(`src/${file}`), { recursive: true });
+			await fs.writeFile(`src/${file}`, 'export const value = 42;');
+		}
 		await fs.mkdir('src/app/Contexts/Orders', { recursive: true });
 		await fs.writeFile('src/app/Contexts/Orders/index.ts', 'export const value=42');
 		await fs.writeFile('src/app/Contexts/Orders/Order.ts', 'export interface IOrder {}');
-		for (const name of ['#contexts/Orders', '#contexts/Orders/Order'])
+		for (const name of [
+			'#contexts/Orders',
+			'#contexts/Orders/Order',
+			'#applicationCore/Http/ApiDatasource',
+			'#bootstrap',
+			'#bootstrap/Handlers',
+			'#program'
+		])
 			assert(
 				ts.resolveModuleName(
 					name,

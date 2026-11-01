@@ -132,7 +132,7 @@ test('fresh accepting hooks disables CLI push checks and detects package manager
 		await fs.writeFile('vite.config.ts', "import { sveltekit } from '@sveltejs/kit/vite'; export default {plugins: [sveltekit()]};");
 		const { default: installFresh } = await import('../src/install/installFresh.ts');
 		prompts._injected = [];
-		prompts.inject([false, false, false, false, false, false, false, true]);
+		prompts.inject([false, false, false, false, false, false, true]);
 		await installFresh();
 		assert.equal((await loadUserConfig()).runChecksBeforePush, false);
 		assert.equal((await loadUserConfig()).packageManager, 'pnpm');

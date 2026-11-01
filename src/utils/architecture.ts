@@ -7,7 +7,8 @@ export const SHARED_WORKSPACE = 'Shared';
 export const ARCHITECTURE_ALIASES = {
 	'#contexts': './src/app/Contexts',
 	'#presentation': './src/app/Presentation',
-	'#platform': './src/platform'
+	'#applicationCore': './src/app/ApplicationCore',
+	'#bootstrap': './src/bootstrap'
 } as const;
 export const CONTEXT_DIRS = [
 	'Domain/Resources',
@@ -36,7 +37,8 @@ export const getContextPath = (context: string, cwd = process.cwd()): string =>
 	path.join(getContextsPath(cwd), normalizePascalName(context));
 export const getPresentationPath = (workspace?: string, cwd = process.cwd()): string =>
 	workspace ? path.join(getAppPath(cwd), 'Presentation', normalizePascalName(workspace)) : path.join(getAppPath(cwd), 'Presentation');
-export const getPlatformPath = (cwd = process.cwd()): string => path.join(cwd, 'src', 'platform');
+export const getApplicationCorePath = (cwd = process.cwd()): string => path.join(getAppPath(cwd), 'ApplicationCore');
+export const getBootstrapPath = (cwd = process.cwd()): string => path.join(cwd, 'src', 'bootstrap');
 export const getAggregatePath = (context: string, aggregate: string, cwd = process.cwd()): string =>
 	path.join(getContextPath(context, cwd), normalizePascalName(aggregate));
 export const getContextImportPath = (context: string): string => `#contexts/${normalizePascalName(context)}`;

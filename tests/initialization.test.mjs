@@ -144,7 +144,7 @@ test('fresh initialization is idempotent and ignores legacy contexts', () =>
 		assert.deepEqual(await snapshot(process.cwd()), once);
 		assert.deepEqual(await discoverContexts(), ['SharedKernel']);
 		await fs.access('src/app/Contexts/SharedKernel/Contracts');
-		await fs.access('src/platform/Foundation');
+		await fs.access('src/app/ApplicationCore');
 		await fs.access('src/app/Presentation/Shared/Ui');
 		assert.equal((await loadUserConfig()).runChecksBeforePush, true);
 	}));

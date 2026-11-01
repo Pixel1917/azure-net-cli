@@ -23,7 +23,10 @@ async function fixture(input, run) {
 		await fs.rm(root, { recursive: true, force: true });
 	}
 }
-const oldPlatform = { 'src/app/Platform/Foundation/Provider/HttpProvider.ts': 'export const HttpProvider = () => ({});' };
+const oldPlatform = {
+	'src/app/Platform/Foundation/Provider/HttpProvider.ts': 'export const HttpProvider = () => ({});',
+	'src/app/Platform/Foundation/Datasource/ApiDatasource.ts': 'export class ApiDatasource {}'
+};
 
 test('relocates platform, migrates known conditional aliases, and plans without writes', () =>
 	fixture(
@@ -40,11 +43,11 @@ test('relocates platform, migrates known conditional aliases, and plans without 
 			await assert.rejects(fs.access(path.join(root, 'src/platform')), /ENOENT/);
 			await assert.rejects(fs.access(path.join(root, '.azure-net')), /ENOENT/);
 			const pkg = JSON.parse(plan.writes.get(path.join(root, 'package.json')));
-			assert.equal(pkg.imports['#platform/*'].default, './src/platform/*');
-			assert.deepEqual(pkg.imports['#platform/*'].types, ['./src/platform/*.ts', './src/platform/*/index.ts']);
+			assert.equal(pkg.imports['#applicationCore/*'].default, './src/app/ApplicationCore/*');
+			assert(!('#platform/*' in pkg.imports));
 			assert(!('#platform' in pkg.imports));
 			await applyMigration(plan);
-			await fs.access(path.join(root, 'src/platform/Foundation/Provider/HttpProvider.ts'));
+			await fs.access(path.join(root, 'src/app/ApplicationCore/Http/ApiDatasource/HttpProvider.ts'));
 			await assert.rejects(fs.access(path.join(root, Object.keys(oldPlatform)[0])), /ENOENT/);
 			await assert.rejects(planMigration(root), /Nothing to migrate/);
 		}
@@ -54,7 +57,9 @@ test('custom platform mappings are retained and new references use relative path
 	fixture(
 		{
 			...oldPlatform,
-			'package.json': JSON.stringify({ imports: { '#platform/*': './custom-platform/*', '#platform': './my-entry.ts' } }),
+			'package.json': JSON.stringify({
+				imports: { '#platform/*': './custom-platform/*', '#platform': './my-entry.ts', '#applicationCore/*': './custom-core/*' }
+			}),
 			'src/routes/+page.ts':
 				"import {HttpProvider} from '../app/Platform/Foundation/Provider/HttpProvider'; export const load = HttpProvider;"
 		},
@@ -65,7 +70,7 @@ test('custom platform mappings are retained and new references use relative path
 			assert.equal(pkg.imports['#platform'], './my-entry.ts');
 			assert.match(
 				plan.writes.get(path.join(root, 'src/routes/+page.ts')).toString(),
-				/\.\.\/platform\/Foundation\/Provider\/HttpProvider/
+				/\.\.\/app\/ApplicationCore\/Http\/ApiDatasource\/HttpProvider/
 			);
 			assert(plan.issues.some((i) => /Custom package import/.test(i.reason)));
 		}
@@ -133,15 +138,15 @@ test('existing platform destination is never overwritten or silently merged', ()
 	fixture(
 		{
 			...oldPlatform,
-			'src/platform/Foundation/Provider/HttpProvider.ts': '// existing implementation'
+			'src/app/ApplicationCore/Http/ApiDatasource/HttpProvider.ts': '// existing implementation'
 		},
 		async (root) => {
 			const plan = await planMigration(root);
 			assert(plan.issues.some((i) => /Target collision/.test(i.reason)));
-			assert.equal(plan.moves.length, 0);
+			assert(!plan.moves.some(({ from }) => from.endsWith('/Provider/HttpProvider.ts')));
 			await applyMigration(plan);
 			assert.equal(
-				await fs.readFile(path.join(root, 'src/platform/Foundation/Provider/HttpProvider.ts'), 'utf8'),
+				await fs.readFile(path.join(root, 'src/app/ApplicationCore/Http/ApiDatasource/HttpProvider.ts'), 'utf8'),
 				'// existing implementation'
 			);
 			await fs.access(path.join(root, Object.keys(oldPlatform)[0]));
@@ -153,7 +158,7 @@ test('apply refuses symlink replacement of a target parent before writing anythi
 		const plan = await planMigration(root);
 		const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'migration-outside-'));
 		try {
-			await fs.symlink(outside, path.join(root, 'src/platform'));
+			await fs.symlink(outside, path.join(root, 'src/app/ApplicationCore'));
 			await assert.rejects(applyMigration(plan), /symbolic link/);
 			assert.deepEqual(await fs.readdir(outside), []);
 			await fs.access(path.join(root, Object.keys(oldPlatform)[0]));
@@ -179,6 +184,7 @@ test('explicit HTTP-backed application provider becomes a context root without f
 import {HttpProvider} from '#platform/Foundation/Provider/HttpProvider';
 export const SalesProvider = CreateServiceContainer('Sales', {dependsOn:{HttpProvider},register:({HttpProvider})=>({Orders:()=>HttpProvider.orders})});`,
 			'src/platform/Foundation/Provider/HttpProvider.ts': 'export const HttpProvider = () => ({orders: {}});',
+			'src/platform/Foundation/Datasource/ApiDatasource.ts': 'export class ApiDatasource {}',
 			'src/routes/+page.ts':
 				"import {SalesProvider} from '../app/sales/layers/application/providers/ApplicationProvider'; export const load = () => SalesProvider().Orders;"
 		},

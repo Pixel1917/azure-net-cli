@@ -2,6 +2,13 @@ import { checkDependencies } from './architecture.js';
 
 export default async function checkLayerBoundaries(): Promise<void> {
 	await checkDependencies('Layer boundaries', (source, target) => {
+		if (source[0] === 'ApplicationCore' && ['Contexts', 'Presentation'].includes(target[0] ?? ''))
+			return 'ApplicationCore cannot import Contexts or Presentation';
+		if (target[0] === '..' && target[1] === 'bootstrap') {
+			const allowed =
+				source[0] === '..' && (source[1] === 'bootstrap' || source[1] === 'routes' || (source[1] === 'program.ts' && source.length === 2));
+			if (!allowed) return 'bootstrap can only be imported by src/routes, src/program.ts or src/bootstrap';
+		}
 		if (source[0] === 'Contexts') {
 			if (target[0] === 'Presentation') return 'Contexts cannot import Presentation';
 			if (target[0] === 'Contexts' && !target[1])

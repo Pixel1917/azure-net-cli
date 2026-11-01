@@ -2,7 +2,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import ts from 'typescript';
 import prompts from 'prompts';
-import { getContextPath, getPlatformPath, normalizePascalName } from '../../utils/architecture.js';
+import { getContextPath, normalizePascalName } from '../../utils/architecture.js';
+import { httpSourcePath, httpSourceImport } from '../../utils/httpSources.js';
 import { getRepositoryMeta, printApplicationProviderWiring } from './repositoryModuleShared.js';
 
 export interface CompositionRegistration {
@@ -21,24 +22,26 @@ export function mergeComposition(content: string, input: CompositionRegistration
 	const aggregate = normalizePascalName(input.aggregate);
 	const datasource = normalizePascalName(input.datasource);
 	const meta = getRepositoryMeta(input.repository);
+	const providerBinding = `${datasource}HttpProvider`;
 	const imports = [
 		['CompositionRoot', '@azure-net/kit'],
-		['HttpProvider', '#platform/Foundation/Provider'],
+		[`HttpProvider as ${providerBinding}`, httpSourceImport(datasource)],
 		[meta.className, `#contexts/${context}/${aggregate}/Infrastructure/Repositories/${meta.className}`],
 		[meta.useCasesClassName, `#contexts/${context}/${aggregate}/Application/UseCases/${meta.useCasesClassName}`]
 	] as const;
-	const registration = `${meta.useCasesClassName}: () => new ${meta.useCasesClassName}(new ${meta.className}(HttpProvider.${datasource}))`;
+	const registration = `${meta.useCasesClassName}: () => new ${meta.useCasesClassName}(new ${meta.className}(${providerBinding}.${datasource}))`;
 	if (!content.trim())
 		return (
 			imports.map(([name, from]) => `import { ${name} } from '${from}';`).join('\n') +
-			`\n\nexport const ${context}Context = new CompositionRoot({\n dependsOn: { HttpProvider },\n register: ({ HttpProvider }) => ({\n  ${registration}\n })\n});\n`
+			`\n\nexport const ${context}Context = new CompositionRoot({\n dependsOn: { ${providerBinding} },\n register: ({ ${providerBinding} }) => ({\n  ${registration}\n })\n});\n`
 		);
 	const source = ts.createSourceFile('Composition.ts', content, ts.ScriptTarget.Latest, true);
 	if ((source as ts.SourceFile & { parseDiagnostics: ts.Diagnostic[] }).parseDiagnostics.length)
 		throw new Error('Composition.ts contains syntax errors; automatic edit refused.');
 	const edits: { start: number; end: number; text: string }[] = [];
 	const missing: string[] = [];
-	for (const [name, from] of imports) {
+	for (const [importName, from] of imports) {
+		const [originalName, name = originalName!] = importName.split(' as ');
 		let found = false;
 		for (const statement of source.statements) {
 			if (ts.isImportDeclaration(statement)) {
@@ -50,7 +53,7 @@ export function mergeComposition(content: string, input: CompositionRegistration
 						if (entry.name.text !== name) continue;
 						if (
 							statement.moduleSpecifier.getText(source).slice(1, -1) !== from ||
-							(entry.propertyName?.text ?? entry.name.text) !== name ||
+							(entry.propertyName?.text ?? entry.name.text) !== originalName ||
 							statement.importClause?.isTypeOnly ||
 							entry.isTypeOnly
 						)
@@ -70,7 +73,7 @@ export function mergeComposition(content: string, input: CompositionRegistration
 				throw new Error(`Declaration collision for ${name}.`);
 			}
 		}
-		if (!found) missing.push(`import { ${name} } from '${from}';`);
+		if (!found) missing.push(`import { ${importName} } from '${from}';`);
 	}
 	const declaration = source.statements
 		.filter(ts.isVariableStatement)
@@ -127,14 +130,14 @@ export function mergeComposition(content: string, input: CompositionRegistration
 			depends.initializer.properties.some((p) => ts.isSpreadAssignment(p) || !propertyName(p))
 		)
 			throw new Error('Dynamic dependsOn requires manual wiring.');
-		const http = getProperty(depends.initializer, 'HttpProvider');
-		if (!http) append(depends.initializer, 'HttpProvider');
+		const http = getProperty(depends.initializer, providerBinding);
+		if (!http) append(depends.initializer, providerBinding);
 		else if (
 			!ts.isShorthandPropertyAssignment(http) &&
-			!(ts.isPropertyAssignment(http) && http.initializer.getText(source) === 'HttpProvider')
+			!(ts.isPropertyAssignment(http) && http.initializer.getText(source) === providerBinding)
 		)
 			throw new Error('HttpProvider dependency has custom wiring; automatic edit refused.');
-	} else append(config, 'dependsOn: { HttpProvider }');
+	} else append(config, `dependsOn: { ${providerBinding} }`);
 
 	const reserved = new Set([meta.className, meta.useCasesClassName]);
 	const bindingNames = (name: ts.BindingName): string[] =>
@@ -145,23 +148,23 @@ export function mergeComposition(content: string, input: CompositionRegistration
 		for (const statement of fn.body.statements) {
 			if (
 				ts.isVariableStatement(statement) &&
-				statement.declarationList.declarations.some((d) => bindingNames(d.name).some((n) => reserved.has(n) || n === 'HttpProvider'))
+				statement.declarationList.declarations.some((d) => bindingNames(d.name).some((n) => reserved.has(n) || n === providerBinding))
 			)
 				throw new Error('register local binding shadows an injected dependency; manual wiring required.');
 		}
 	const parameter = fn.parameters[0];
 	if (!parameter) {
-		edits.push({ start: fn.parameters.pos, end: fn.parameters.pos, text: '{ HttpProvider }' });
+		edits.push({ start: fn.parameters.pos, end: fn.parameters.pos, text: `{ ${providerBinding} }` });
 	} else {
 		if (!ts.isObjectBindingPattern(parameter.name) || parameter.initializer || parameter.name.elements.some((e) => e.dotDotDotToken))
 			throw new Error('register dependencies require manual wiring.');
-		const binding = parameter.name.elements.find((e) => (e.propertyName ?? e.name).getText(source) === 'HttpProvider');
-		if (binding && (binding.name.getText(source) !== 'HttpProvider' || binding.initializer))
+		const binding = parameter.name.elements.find((e) => (e.propertyName ?? e.name).getText(source) === providerBinding);
+		if (binding && (binding.name.getText(source) !== providerBinding || binding.initializer))
 			throw new Error('Renamed HttpProvider requires manual wiring.');
 		if (!binding) {
 			const last = parameter.name.elements.at(-1);
 			const position = last?.end ?? parameter.name.getStart(source) + 1;
-			edits.push({ start: position, end: position, text: (last ? ',' : '') + ' HttpProvider' });
+			edits.push({ start: position, end: position, text: (last ? ',' : '') + ` ${providerBinding}` });
 		}
 	}
 
@@ -194,13 +197,13 @@ export function httpProviderHasDatasource(content: string, datasource: string): 
 }
 
 export async function wireComposition(input: CompositionRegistration): Promise<void> {
-	const provider = path.join(getPlatformPath(), 'Foundation/Provider/HttpProvider.ts');
+	const provider = path.join(httpSourcePath(input.datasource), 'HttpProvider.ts');
 
 	let providerText: string;
 	try {
 		providerText = await fs.readFile(provider, 'utf8');
 	} catch {
-		throw new Error('Create Foundation/Provider/HttpProvider.ts before automatic composition wiring.');
+		throw new Error('Create the datasource HttpProvider.ts with core datasource before automatic composition wiring.');
 	}
 	if (!httpProviderHasDatasource(providerText, input.datasource))
 		throw new Error(

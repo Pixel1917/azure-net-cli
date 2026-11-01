@@ -5,7 +5,8 @@ import {
 	discoverPresentationWorkspaces,
 	ensureContextStructure,
 	ensurePresentationStructure,
-	getPlatformPath,
+	getApplicationCorePath,
+	getBootstrapPath,
 	normalizePascalName,
 	SHARED_CONTEXT,
 	SHARED_WORKSPACE
@@ -23,7 +24,9 @@ export default async function initStructure(): Promise<void> {
 		...(await discoverPresentationWorkspaces())
 	]);
 	for (const boundary of boundaries) await ensurePresentationStructure(boundary);
-	for (const dir of ['Foundation', 'Bootstrap']) await fs.mkdir(path.join(getPlatformPath(), dir), { recursive: true });
+	for (const dir of ['Http', 'Cookies', 'Validation', 'Configuration', 'Services'])
+		await fs.mkdir(path.join(getApplicationCorePath(), dir), { recursive: true });
+	await fs.mkdir(getBootstrapPath(), { recursive: true });
 	await initAliases();
 	console.log('Folders updated. Existing files were preserved.');
 }

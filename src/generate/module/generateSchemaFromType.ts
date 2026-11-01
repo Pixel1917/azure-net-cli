@@ -26,7 +26,8 @@ const resolveAliasMap = async (): Promise<Map<string, string>> => {
 	const map = new Map<string, string>([
 		['#contexts', path.join(process.cwd(), 'src/app/Contexts')],
 		['#presentation', path.join(process.cwd(), 'src/app/Presentation')],
-		['#platform', path.join(process.cwd(), 'src/platform')]
+		['#applicationCore', path.join(process.cwd(), 'src/app/ApplicationCore')],
+		['#bootstrap', path.join(process.cwd(), 'src/bootstrap')]
 	]);
 
 	return map;

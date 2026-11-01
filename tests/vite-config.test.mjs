@@ -116,16 +116,21 @@ test('legacy file is backed up, removed and not recreated; respects project Pret
 test('fresh install optionally creates HttpProvider and preserves existing registrations', () =>
 	fixture(async () => {
 		await fs.writeFile('vite.config.ts', vite);
-		// Cookie, response, datasource, name, provider, schema, error handler, translations, prettier, hooks.
-		prompts.inject([false, false, true, 'Api', true, false, false, false, false, false]);
+		// Cookie, datasource, name, response, provider, schema, error handler, translations, prettier, hooks.
+		prompts.inject([false, true, 'Api', false, true, false, false, false, false, false]);
 		await installFresh();
-		const dir = 'src/platform/Foundation/Provider';
+		const dir = 'src/app/ApplicationCore/Http/ApiDatasource';
 		const output = await fs.readFile(`${dir}/HttpProvider.ts`, 'utf8');
 		assert.match(output, /ApiDatasource: \(\) => new ApiDatasource/);
 		assert.match(output, /CreateServiceContainer/);
-		assert.deepEqual((await fs.readdir(dir)).sort(), ['HttpProvider.ts', 'index.ts']);
+		assert.deepEqual((await fs.readdir(dir)).sort(), ['Datasource.ts', 'HttpProvider.ts', 'index.ts']);
 		await fs.writeFile(`${dir}/HttpProvider.ts`, '// user-owned DI');
+		await registerDatasource('ApiDatasource');
 		await registerDatasource('AnotherDatasource');
+		assert.match(
+			await fs.readFile('src/app/ApplicationCore/Http/AnotherDatasource/HttpProvider.ts', 'utf8'),
+			/CreateServiceContainer\('AnotherDatasourceHttpProvider'/
+		);
 		assert.equal(await fs.readFile(`${dir}/HttpProvider.ts`, 'utf8'), '// user-owned DI');
 		await assert.rejects(fs.access('svelte.config.js'));
 	}));

@@ -31,7 +31,13 @@ async function fixture(run) {
 		for (const context of ['Orders/Order', 'Billing/Invoice'])
 			for (const folder of ['Domain/Entities', 'Domain/Ports', 'Domain/Enums', 'Application/UseCases', 'Infrastructure/Repositories'])
 				await fs.mkdir(path.join(root, 'src/app/Contexts', context, folder), { recursive: true });
-		for (const folder of ['app/Presentation', 'platform', 'app/Contexts/SharedKernel/Contracts', 'app/Contexts/SharedKernel/Domain'])
+		for (const folder of [
+			'app/Presentation',
+			'app/ApplicationCore',
+			'bootstrap',
+			'app/Contexts/SharedKernel/Contracts',
+			'app/Contexts/SharedKernel/Domain'
+		])
 			await fs.mkdir(path.join(root, 'src', folder), { recursive: true });
 		await run(write);
 	} finally {
@@ -111,12 +117,12 @@ test('real Svelte aliases including wildcard and absolute targets', () =>
 		await write('src/app/Contexts/Orders/Order/Domain/Test.ts', "import '@ui/Ui/X'");
 		await check(boundaries, true);
 	}));
-test('workspace isolation and Shared direction; routes and Platform compose contexts', () =>
+test('workspace isolation and Shared direction; routes and bootstrap compose contexts', () =>
 	fixture(async (write) => {
 		await write('src/app/Presentation/Admin/Ui/Test.ts', "import '#presentation/Shared/Ui/X'");
 		await write('src/routes/Test.ts', "import '#contexts/Orders/Order/Domain/X'; import '#contexts/Billing/Invoice/Domain/X'");
 		await write(
-			'src/platform/Foundation/DI/Test.ts',
+			'src/bootstrap/Composition/Test.ts',
 			"import '#contexts/Orders/Order/Domain/X'; import '#contexts/Billing/Invoice/Domain/X'"
 		);
 		await check(boundaries);
@@ -130,14 +136,14 @@ test('folder shape, naming, barrels and routes outside app', () =>
 	fixture(async (write) => {
 		await write('src/routes/+page.svelte', '<h1>Hello</h1>');
 		await write('src/app/Presentation/Public/Ui/Components/Core/Card.svelte', '');
-		await write('src/platform/index.ts', "export * as DI from './Foundation/DI';");
+		await write('src/app/ApplicationCore/index.ts', "export * as DI from './Foundation/DI';");
 		await check(folders);
 		await fs.mkdir('src/app/Contexts/Orders/Order/badName');
 		await check(folders, true);
 		await fs.rmdir('src/app/Contexts/Orders/Order/badName');
-		await write('src/platform/index.ts', 'export const Bad = 1;');
+		await write('src/app/ApplicationCore/index.ts', 'export const Bad = 1;');
 		await check(folders);
-		await write('src/platform/index.ts', '');
+		await write('src/app/ApplicationCore/index.ts', '');
 		await fs.mkdir('src/app/Contexts/Orders/Order/Wrong');
 		await check(folders, true);
 	}));
@@ -158,16 +164,16 @@ test('domain names, generic aliases and enums without declaration-count limits',
 	}));
 test('import styles include dynamic imports and reexports', () =>
 	fixture(async (write) => {
-		await write('src/platform/Test.ts', "import('./Other.ts'); export * from './Other.js';");
+		await write('src/app/ApplicationCore/Test.ts', "import('./Other.ts'); export * from './Other.js';");
 		await check(imports, true);
-		await write('src/platform/Test.ts', "import type {T} from './Other'; import {X} from './Other'");
+		await write('src/app/ApplicationCore/Test.ts', "import type {T} from './Other'; import {X} from './Other'");
 		await check(imports, true);
 	}));
 test('provider and hooks regressions and internal runs every check after failure', () =>
 	fixture(async (write) => {
 		await check(internal);
 		await write(
-			'src/platform/Test.ts',
+			'src/app/ApplicationCore/Test.ts',
 			"CreateDiContainer('A', {dependsOn:{B:true}}); CreateDiContainer('B', {dependsOn:{A:true}}); CreateDiContainer('A', {});"
 		);
 		await write('src/hooks.server.ts', '');
@@ -239,7 +245,7 @@ test('AST excludes declaration-like strings, regexes and imported interface name
 
 test('all-inline-type imports form the type group, mixed imports remain values', () =>
 	fixture(async (write) => {
-		const file = 'src/platform/Test.ts';
+		const file = 'src/app/ApplicationCore/Test.ts';
 		await write(file, "import {X} from 'a'; import {type A, type B as C} from 'b'; import 'c';");
 		await check(imports);
 		await write(file, "import {type A} from 'a'; import {B} from 'b';");
@@ -339,7 +345,7 @@ test('aggregate layers, SharedKernel shape and Presentation component categories
 			'src/app/Contexts/SharedKernel/Application',
 			'src/app/Contexts/Orders/Order/Domain/Bad-Name',
 			'src/app/Contexts/Orders/Order/Shared',
-			'src/platform/Shared',
+			'src/app/ApplicationCore/Shared',
 			...['Consts', 'consts', 'utils', 'Utils', 'common', 'Common'].map((name) => `src/${name}`)
 		]) {
 			await fs.mkdir(directory, { recursive: true });
@@ -357,16 +363,40 @@ test('context interfaces, resources, repository/usecase names and global enums',
 			['src/app/Contexts/Orders/Order/Domain/Resources/Order.ts', 'export interface IOrder {}', /must end with Resource/],
 			['src/app/Contexts/Orders/Order/Infrastructure/Repositories/OrderRepository.ts', 'export class Bad {}', /must end with Repository/],
 			['src/app/Contexts/Orders/Order/Application/UseCases/OrderUseCases.ts', 'export interface IOrder {}', /must end with UseCases/],
-			['src/platform/State.ts', 'export enum State { On }', /must end with Enum/],
-			['src/routes/State.ts', 'export enum StateEnum { On }', /file name must end with Enum/]
+			['src/app/ApplicationCore/State.ts', 'export enum State { On }', /must end with Enum/],
+			['src/app/ApplicationCore/Enums/State.ts', 'export enum StateEnum { On }', /file name must end with Enum/]
 		]) {
 			await write(file, code);
 			assert.match(await check(domain, true), expected);
 			await fs.rm(file);
 		}
 		await write('src/app/Contexts/Orders/Order/Domain/Resources/OrderResource.ts', 'export interface IOrderResource {}');
-		await write('src/platform/StateEnum.ts', 'export enum StateEnum { On }');
+		await write('src/app/ApplicationCore/StateEnum.ts', 'export enum StateEnum { On }');
 		await check(domain);
+	}));
+
+test('auxiliary enums require Enum names but only Enums directories require Enum filenames', () =>
+	fixture(async (write) => {
+		for (const file of [
+			'src/app/ApplicationCore/Http/ApiDatasource/ApiResponse.ts',
+			'src/app/Contexts/Orders/Order/Domain/Resources/OrderResource.ts',
+			'src/routes/State.ts'
+		]) {
+			const resource = file.endsWith('OrderResource.ts') ? 'export interface IOrderResource {}' : '';
+			await write(file, `export enum StatusEnum { Ok } ${resource}`);
+			await check(domain);
+			await write(file, `export enum Status { Ok } ${resource}`);
+			assert.match(await check(domain, true), /Enum "Status" must end with Enum/);
+			await fs.rm(file);
+		}
+		for (const directory of ['src/app/ApplicationCore/Enums', 'src/app/Contexts/Orders/Order/Domain/Enums/Nested']) {
+			await write(`${directory}/Status.ts`, 'export enum StatusEnum { Ok }');
+			assert.match(await check(domain, true), /Enum file name must end with Enum/);
+			await fs.rm(`${directory}/Status.ts`);
+			await write(`${directory}/StatusEnum.ts`, 'export enum StatusEnum { Ok }');
+			await write(`${directory}/index.ts`, "export * from './StatusEnum';");
+			await check(domain);
+		}
 	}));
 
 test('constructor dependency interfaces, imported aliases, defaults and store exceptions', () =>
@@ -424,7 +454,7 @@ const example = 'const helper = () => 1';`
 
 test('bound styles belong to the final import group', () =>
 	fixture(async (write) => {
-		const file = 'src/platform/Test.ts';
+		const file = 'src/app/ApplicationCore/Test.ts';
 		await write(
 			file,
 			"import { value, type Inline } from 'a'; import type {Type} from 'b'; import styles from './theme.module.css'; import 'setup';"
@@ -472,10 +502,10 @@ test('project checks never invoke mutating format; opt into format:check explici
 			syncBuiltinESMExports();
 			await write('azure-net.config.ts', "export default { packageManager: 'pnpm' };");
 			await write('package.json', JSON.stringify({ scripts: { format: 'prettier --write .', lint: 'eslint .', check: 'tsc --noEmit' } }));
-			await write('src/platform/Untouched.ts', 'export const unchanged=1;');
+			await write('src/app/ApplicationCore/Untouched.ts', 'export const unchanged=1;');
 			assert.match(await check(project), /Skipping formatting: no format:check/);
 			assert.deepEqual(calls, ['pnpm run lint', 'pnpm run check']);
-			assert.equal(await fs.readFile('src/platform/Untouched.ts', 'utf8'), 'export const unchanged=1;');
+			assert.equal(await fs.readFile('src/app/ApplicationCore/Untouched.ts', 'utf8'), 'export const unchanged=1;');
 			calls.length = 0;
 			await write('package.json', JSON.stringify({ scripts: { format: 'prettier --write .', 'format:check': 'prettier --check .' } }));
 			await check(project);
@@ -498,7 +528,7 @@ test('utility directory prohibition is recursive and case insensitive throughout
 	fixture(async () => {
 		for (const parent of [
 			'src',
-			'src/platform/Deep/Nested',
+			'src/app/ApplicationCore/Deep/Nested',
 			'src/routes/Feature',
 			'src/app/Contexts/Orders/Order/Domain',
 			'src/app/Presentation/Public/Scopes/Order'
@@ -655,14 +685,14 @@ test('resource naming remains strict for standalone contracts and explicit resou
 test('current provider APIs discover one service container and two unnamed composition roots', () =>
 	fixture(async (write) => {
 		await write(
-			'src/platform/HttpProvider.ts',
+			'src/app/ApplicationCore/HttpProvider.ts',
 			`import { CreateServiceContainer as Service } from '@azure-net/kit';
 export const HttpProvider = Service('Http', { register: () => ({}) });`
 		);
 		await write(
 			'src/app/Contexts/Orders/Composition.ts',
 			`import { CompositionRoot as Root } from '@azure-net/kit';
-import { HttpProvider as Http } from '#platform/HttpProvider';
+import { HttpProvider as Http } from '#applicationCore/HttpProvider';
 export const OrdersContext = new Root({ dependsOn: { renamedHttp: Http }, register: () => ({}) });`
 		);
 		await write(
@@ -682,27 +712,27 @@ export const PublicContext = new Kit.CompositionRoot({ dependsOn: { OrdersContex
 test('current provider cycles follow aliased values, barrel exports and root.resolve', () =>
 	fixture(async (write) => {
 		await write(
-			'src/platform/A.ts',
+			'src/app/ApplicationCore/A.ts',
 			`import { CreateServiceContainer } from '@azure-net/kit';
 import { Other as Dependency } from './Barrel';
 export const A = CreateServiceContainer('A-id', { dependsOn: { differentKey: Dependency.resolve }, register: () => ({}) });`
 		);
 		await write(
-			'src/platform/B.ts',
+			'src/app/ApplicationCore/B.ts',
 			`import { CompositionRoot as Root } from '@azure-net/kit';
 import { A as Service } from './A';
 export const B = new Root({ dependsOn: { renamed: Service }, register: () => ({}) });`
 		);
-		await write('src/platform/Barrel/index.ts', "export { B as Other } from '../B';");
+		await write('src/app/ApplicationCore/Barrel/index.ts', "export { B as Other } from '../B';");
 		assert.match(await check(providerGraph, true), /A -> B -> A|B -> A -> B/);
 		await check(providerNames);
 	}));
 
 test('provider cycles include self-dependencies, namespace imports and export-star barrels', () =>
 	fixture(async (write) => {
-		await write('src/platform/Barrel/index.ts', "export * from '../Root';");
+		await write('src/app/ApplicationCore/Barrel/index.ts', "export * from '../Root';");
 		await write(
-			'src/platform/Root.ts',
+			'src/app/ApplicationCore/Root.ts',
 			`import { CompositionRoot } from '@azure-net/kit';
 import * as Roots from './Barrel';
 export const Root = new CompositionRoot({ dependsOn: { self: Roots.Root } });`
@@ -713,7 +743,7 @@ export const Root = new CompositionRoot({ dependsOn: { self: Roots.Root } });`
 test('provider AST follows static config/spreads but ignores strings, comments and unrelated methods', () =>
 	fixture(async (write) => {
 		await write(
-			'src/platform/Root.ts',
+			'src/app/ApplicationCore/Root.ts',
 			`import { CompositionRoot, CreateServiceContainer } from '@azure-net/kit';
 // CreateServiceContainer('fake', {dependsOn:{Fake}})
 const example = "new CompositionRoot({dependsOn:{Fake}})";
@@ -732,13 +762,16 @@ test('duplicate explicit service names fail; unnamed roots may reuse local names
 	fixture(async (write) => {
 		for (const filename of ['One', 'Two'])
 			await write(
-				`src/platform/${filename}.ts`,
+				`src/app/ApplicationCore/${filename}.ts`,
 				`import { CompositionRoot, CreateServiceContainer } from '@azure-net/kit';
 export const Root = new CompositionRoot({});
 export const Service = CreateServiceContainer('Duplicate', {});`
 			);
 		assert.match(await check(providerNames, true), /Duplicate provider name "Duplicate"/);
-		await write('src/platform/Two.ts', "import { CompositionRoot } from '@azure-net/kit'; export const Root = new CompositionRoot({});");
+		await write(
+			'src/app/ApplicationCore/Two.ts',
+			"import { CompositionRoot } from '@azure-net/kit'; export const Root = new CompositionRoot({});"
+		);
 		await check(providerNames);
 		await check(providerGraph);
 	}));

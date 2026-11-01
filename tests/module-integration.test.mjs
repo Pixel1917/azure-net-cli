@@ -50,7 +50,7 @@ function compile(dir) {
 			'@azure-net/kit': [path.join(kit, 'dist/index.d.ts')],
 			'@azure-net/kit/*': [path.join(kit, 'dist/*')],
 			'#contexts/*': [path.join(dir, 'src/app/Contexts/*')],
-			'#platform/*': [path.join(dir, 'src/platform/*')],
+			'#applicationCore/*': [path.join(dir, 'src/app/ApplicationCore/*')],
 			'#presentation/*': [path.join(dir, 'src/app/Presentation/*')]
 		}
 	});
@@ -70,10 +70,10 @@ for (const mode of ['raw', 'simple', 'wrapped'])
 		await fixture(async ({ dir, write }) => {
 			await write('azure-net.config.ts', `export default {appBoundaries:['Admin']};`);
 			if (mode !== 'raw') {
-				prompts.inject(['Api', mode === 'wrapped']);
+				prompts.inject(['Api', 'Api', mode === 'wrapped']);
 				await createResponse();
 			}
-			prompts.inject(['Api', ...(mode === 'raw' ? [] : ['ApiResponse']), true]);
+			prompts.inject([mode === 'raw' ? 'Api' : 'ApiDatasource', ...(mode === 'raw' ? [false] : ['ApiResponse']), true]);
 			await createDatasource();
 			prompts.inject(['Schema', 'en', true]);
 			await createSchema();
@@ -135,6 +135,34 @@ for (const mode of ['raw', 'simple', 'wrapped'])
 	});
 
 const input = { context: 'Orders', aggregate: 'Order', repository: 'OrderRepository', datasource: 'ApiDatasource' };
+test('multiple HTTP sources compose without provider or response collisions', { skip: !available }, async () => {
+	await fixture(async ({ dir }) => {
+		for (const [index, name] of ['Api', 'Billing'].entries()) {
+			prompts.inject([...(index ? ['__new__'] : []), name, true, 'Api', true, 'ApiResponse', true]);
+			await createDatasource();
+			const root = `src/app/ApplicationCore/Http/${name}Datasource`;
+			assert.match(await fs.readFile(`${root}/Datasource.ts`, 'utf8'), /from '\.\/ApiResponse'/);
+			assert.match(
+				await fs.readFile(`${root}/HttpProvider.ts`, 'utf8'),
+				new RegExp(`CreateServiceContainer\\('${name}DatasourceHttpProvider'`)
+			);
+			await generateFeature({ context: 'Orders', aggregate: name, datasource: `${name}Datasource`, composition: true, presenter: false });
+		}
+		const file = 'src/app/Contexts/Orders/Composition.ts';
+		const composition = await fs.readFile(file, 'utf8');
+		for (const name of ['Api', 'Billing']) {
+			assert.match(
+				composition,
+				new RegExp(`import \\{ HttpProvider as ${name}DatasourceHttpProvider \\} from '#applicationCore/Http/${name}Datasource'`)
+			);
+			assert.match(composition, new RegExp(`${name}DatasourceHttpProvider\\.${name}Datasource`));
+			await wireComposition({ context: 'Orders', aggregate: name, repository: `${name}Repository`, datasource: `${name}Datasource` });
+		}
+		assert.equal(await fs.readFile(file, 'utf8'), composition);
+		compile(dir);
+	});
+});
+
 test('composition merge preserves source, custom registrations, comments and rejects ambiguous AST', () => {
 	const original = `import { CompositionRoot } from '@azure-net/kit';
 export const OrdersContext = new CompositionRoot({
@@ -157,7 +185,7 @@ export const OrdersContext = new CompositionRoot({
 		original.replace('Custom: () => keep,', '...services,'),
 		original.replace('dependsOn: { Other }', 'dependsOn: getDependencies()'),
 		original.replace('Custom: () => keep,', 'OrderUseCases: () => custom(),'),
-		original.replace('dependsOn: { Other }', 'dependsOn: { Other, HttpProvider: Another }')
+		original.replace('dependsOn: { Other }', 'dependsOn: { Other, ApiDatasourceHttpProvider: Another }')
 	])
 		assert.throws(() => mergeComposition(source, input));
 	assert.equal(mergeComposition(merged, input), merged);
@@ -165,7 +193,7 @@ export const OrdersContext = new CompositionRoot({
 
 test('declarative spec supports custom routes and method DTOs; invalid spec does not write sources', async () => {
 	await fixture(async ({ write }) => {
-		prompts.inject(['Api', true]);
+		prompts.inject(['Api', false, true]);
 		await createDatasource();
 		await write(
 			'feature.json',
@@ -210,7 +238,7 @@ test('declarative spec supports custom routes and method DTOs; invalid spec does
 
 test('feature supports simultaneous query/body and cross-referenced DTO fields with strict checking', { skip: !available }, async () => {
 	await fixture(async ({ dir, write }) => {
-		prompts.inject(['Api', true]);
+		prompts.inject(['Api', false, true]);
 		await createDatasource();
 		await generateFeature({
 			context: 'Identity',
@@ -238,7 +266,7 @@ test('feature supports simultaneous query/body and cross-referenced DTO fields w
 
 test('malformed spec is rejected before creating aggregate files', async () => {
 	await fixture(async () => {
-		prompts.inject(['Api', true]);
+		prompts.inject(['Api', false, true]);
 		await createDatasource();
 		for (const invalid of [
 			{ idType: 'uuid' },
@@ -276,7 +304,7 @@ test('interactive aggregate pipeline selects an aggregate and produces compilabl
 	await fixture(async ({ dir, write }) => {
 		await write('azure-net.config.ts', "export default {appBoundaries:['Public']};");
 		await fs.mkdir('src/app/Presentation/Public/Scopes', { recursive: true });
-		prompts.inject(['Api', true]);
+		prompts.inject(['Api', false, true]);
 		await createDatasource();
 		const { default: generateModule } = await import('../src/generate/module/generateModule.js');
 		prompts.inject([
@@ -289,7 +317,7 @@ test('interactive aggregate pipeline selects an aggregate and produces compilabl
 			true,
 			'ILoginCommand',
 			'Auth',
-			{ name: 'ApiDatasource', importPath: '#platform/Foundation/Datasource' },
+			{ name: 'ApiDatasource', importPath: '#applicationCore/Http/ApiDatasource' },
 			1,
 			'login',
 			'post',
@@ -314,7 +342,7 @@ test('interactive aggregate pipeline selects an aggregate and produces compilabl
 
 test('manual composition pauses generation before any presenter is created', async () => {
 	await fixture(async () => {
-		prompts.inject(['Api', true]);
+		prompts.inject(['Api', false, true]);
 		await createDatasource();
 		prompts.inject([false, false]);
 		await generateFeature({ context: 'Catalog', aggregate: 'Product', datasource: 'ApiDatasource', boundary: 'Public', scope: 'Catalog' });
@@ -349,15 +377,15 @@ test('explicit datasource and HttpProvider registrations are validated', async (
 				generateFeature({ context: 'Orders', aggregate: 'Order', datasource: 'MissingDatasource', composition: false, presenter: false }),
 			/Datasource file not found/
 		);
-		await write('src/platform/Foundation/Datasource/BrokenDatasource.ts', 'export class BrokenDatasource {}');
+		await write('src/app/ApplicationCore/Http/BrokenDatasource/Datasource.ts', 'export class BrokenDatasource {}');
 		await assert.rejects(
 			() =>
 				generateFeature({ context: 'Orders', aggregate: 'Order', datasource: 'BrokenDatasource', composition: false, presenter: false }),
 			/interface IBrokenDatasource/
 		);
-		prompts.inject(['Api', true]);
+		prompts.inject(['Api', false, true]);
 		await createDatasource();
-		const provider = 'src/platform/Foundation/Provider/HttpProvider.ts';
+		const provider = 'src/app/ApplicationCore/Http/ApiDatasource/HttpProvider.ts';
 		const text = await fs.readFile(provider, 'utf8');
 		await fs.writeFile(provider, text.replace('ApiDatasource: ()', 'OtherDatasource: ()'));
 		await assert.rejects(

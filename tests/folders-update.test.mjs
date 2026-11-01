@@ -13,10 +13,10 @@ test('folders-update creates only SharedKernel, adds configured boundaries repea
 		await fs.writeFile('package.json', '{}');
 		await fs.writeFile('azure-net.config.ts', "export default {appBoundaries:['Public']}");
 		await update();
-		assert.deepEqual((await fs.readdir('src/app')).sort(), ['Contexts', 'Presentation']);
+		assert.deepEqual((await fs.readdir('src/app')).sort(), ['ApplicationCore', 'Contexts', 'Presentation']);
 		assert.deepEqual(await fs.readdir('src/app/Contexts'), ['SharedKernel']);
 		assert.deepEqual((await fs.readdir('src/app/Contexts/SharedKernel')).sort(), ['Contracts', 'Domain']);
-		assert.deepEqual((await fs.readdir('src/platform')).sort(), ['Bootstrap', 'Foundation']);
+		assert.deepEqual((await fs.readdir('src')).sort(), ['app', 'bootstrap']);
 		assert.deepEqual((await fs.readdir('src/app/Presentation/Public/Ui/Components')).sort(), ['Composite', 'Core', 'Page', 'Scopes']);
 		assert.deepEqual(await fs.readdir('src/app/Presentation/Public/Scopes'), []);
 		await fs.writeFile('src/app/Presentation/Public/Shell/Header.ts', '// keep me');
@@ -24,10 +24,10 @@ test('folders-update creates only SharedKernel, adds configured boundaries repea
 		await update();
 		assert.deepEqual((await fs.readdir('src/app/Presentation')).sort(), ['Admin', 'Public', 'Shared']);
 		assert.equal(await fs.readFile('src/app/Presentation/Public/Shell/Header.ts', 'utf8'), '// keep me');
-		assert.deepEqual(await fs.readdir('src/platform/Foundation'), []);
+		assert.deepEqual((await fs.readdir('src/app/ApplicationCore')).sort(), ['Configuration', 'Cookies', 'Http', 'Services', 'Validation']);
 		const pkg = JSON.parse(await fs.readFile('package.json', 'utf8'));
-		assert.equal(pkg.imports['#platform/*'].default, './src/platform/*');
-		assert.equal(pkg.imports['#platform'], undefined);
+		assert.equal(pkg.imports['#applicationCore/*'].default, './src/app/ApplicationCore/*');
+		assert.equal(pkg.imports['#applicationCore'], undefined);
 	} finally {
 		process.chdir(cwd);
 		await fs.rm(root, { recursive: true, force: true });

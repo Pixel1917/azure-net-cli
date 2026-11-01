@@ -477,7 +477,7 @@ export default async function generatePresenter(options: GeneratePresenterOption
 				if (!schemaFactory) {
 					const availableSchemas = await getSharedSchemaFactories();
 					if (!availableSchemas.length) {
-						console.error('❌ No schema factories found in Platform/Foundation/Schema.');
+						console.error('❌ No schema factories found in ApplicationCore/Validation.');
 						process.exitCode = 1;
 						return;
 					}

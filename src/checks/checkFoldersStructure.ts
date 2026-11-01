@@ -41,9 +41,11 @@ export default async function checkFoldersStructure(): Promise<void> {
 	};
 	try {
 		const src = path.join(process.cwd(), 'src');
-		await required(src, ['app', 'platform']);
-		await allowed(appRoot(), ['Contexts', 'Presentation']);
-		await required(appRoot(), ['Contexts', 'Presentation']);
+		await required(src, ['app', 'bootstrap']);
+		await allowed(appRoot(), ['Contexts', 'Presentation', 'ApplicationCore']);
+		await required(appRoot(), ['Contexts', 'Presentation', 'ApplicationCore']);
+		if (await exists(path.join(src, 'platform')))
+			issue(path.join(src, 'platform'), 'Legacy platform must migrate to ApplicationCore and bootstrap');
 		for (const context of await directories(path.join(appRoot(), 'Contexts'))) {
 			const root = path.join(appRoot(), 'Contexts', context);
 			if (context === 'SharedKernel') {

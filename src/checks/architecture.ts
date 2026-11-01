@@ -82,7 +82,9 @@ export async function importResolver(): Promise<(file: string, source: string) =
 	const aliases: Record<string, string> = {
 		'#contexts': 'src/app/Contexts',
 		'#presentation': 'src/app/Presentation',
-		'#platform': 'src/platform',
+		'#applicationCore': 'src/app/ApplicationCore',
+		'#bootstrap': 'src/bootstrap',
+		'#program': 'src/program.ts',
 		$lib: 'src/lib',
 		'#lib': 'src/lib'
 	};
@@ -134,7 +136,7 @@ export async function checkDependencies(label: string, rule: (source: string[], 
 	const issues: Issue[] = [];
 	try {
 		const resolve = await importResolver();
-		for (const file of await sourceFiles(appRoot())) {
+		for (const file of await sourceFiles(path.join(process.cwd(), 'src'))) {
 			for (const entry of dependencies(await fs.readFile(file, 'utf8'), file)) {
 				const target = resolve(file, entry.source);
 				if (!target) continue;

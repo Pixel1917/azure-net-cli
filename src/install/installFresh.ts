@@ -8,7 +8,6 @@ import {
 	createCoreSchema,
 	createDatasource,
 	createProgram,
-	createResponse,
 	createTranslationManager,
 	createCookieInstance,
 	createErrorHandler
@@ -31,8 +30,7 @@ export default async function installFresh(): Promise<void> {
 	await configurePackageManager();
 	await initEdges();
 	await runOptionalStep('Create cookie instance?', createCookieInstance);
-	await runOptionalStep('Create API response?', createResponse);
-	await runOptionalStep('Create datasource (with optional HttpProvider)?', createDatasource);
+	await runOptionalStep('Create datasource (with optional response and HttpProvider)?', createDatasource);
 	await runOptionalStep('Create schema factory?', createCoreSchema);
 	const errorHandler = await runOptionalStep('Create error handler?', createErrorHandler);
 	const translations = await runOptionalStep('Create translation manager (i18n)?', createTranslationManager);
@@ -45,7 +43,7 @@ Next steps:
 1. In src/routes/+layout.svelte, merge the following into the existing instance script:
 
    <script lang="ts">
-     import { register } from '../program';
+     import { register } from '#program';
 
      register();
    </script>
@@ -53,9 +51,9 @@ Next steps:
    Call register() synchronously during layout initialization, before resolving presenters or state classes.
    Do not put it inside onMount, an effect, or a module script. Keep your existing script and markup.
    No layout files were modified.
-2. If HttpProvider was created, set httpOptions.prefixUrl in src/platform/Foundation/Provider/HttpProvider.ts to your API URL.
-3. If translations were created, fill the empty dictionaries in src/platform/Bootstrap/Localization/Locales/<Locale>/index.ts.
-4. Review src/platform/Bootstrap/Bootstrap.ts. Existing Bootstrap files were preserved; follow the wiring instructions above if needed.
+2. If HttpProvider was created, set httpOptions.prefixUrl in src/app/ApplicationCore/Http/<DatasourceName>/HttpProvider.ts to your API URL.
+3. If translations were created, fill the empty dictionaries in src/bootstrap/Localization/Locales/<Locale>/index.ts.
+4. Review src/bootstrap/index.ts. Existing Bootstrap files were preserved; follow the wiring instructions above if needed.
 5. From the project root, run: azure-net check project
 `);
 }

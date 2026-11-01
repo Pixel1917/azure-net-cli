@@ -6,7 +6,7 @@ export default async function createProgram(options: BootstrapOptions = {}): Pro
 	await createBootstrap(options);
 	await writeIfNotExists(
 		path.join(process.cwd(), 'src/program.ts'),
-		`import { AppBootstrap } from '#platform/Bootstrap/Bootstrap';
+		`import { AppBootstrap } from '#bootstrap';
 
 export const { register } = AppBootstrap();
 `

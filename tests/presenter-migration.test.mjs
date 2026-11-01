@@ -120,9 +120,9 @@ test('upgrades an already migrated architecture, rewrites consumers and does not
 			`import * as presenters from '#presentation/Admin/Scopes/Orders/OrdersPresenter'; export const load = () => presenters.OrdersPresenter().collection();`
 		);
 		const plan = await planMigration(root);
-		assert.equal(plan.moves.length, 3);
+		assert.equal(plan.moves.length, 0);
 		assert(
-			plan.issues.every((issue) => /IUseCases/.test(issue.reason)),
+			plan.issues.every((issue) => /IUseCases|ownership is ambiguous|Legacy package import/.test(issue.reason)),
 			JSON.stringify(plan.issues)
 		);
 		assert.match(plan.writes.get(path.join(root, presenterFile)).toString(), /export class OrdersPresenter/);
@@ -133,7 +133,7 @@ test('upgrades an already migrated architecture, rewrites consumers and does not
 			/useOrdersPresenter as Orders/
 		);
 		await applyMigration(plan);
-		assert.equal(await fs.readFile(path.join(root, 'src/platform/Foundation/DI/index.ts'), 'utf8'), di);
+		assert.equal(await fs.readFile(path.join(root, 'src/app/Platform/Foundation/DI/index.ts'), 'utf8'), di);
 		assert.doesNotMatch(await fs.readFile(path.join(root, 'azure-net.config.ts'), 'utf8'), /defaultPresenterFactory/);
 		const repeat = await planMigration(root);
 		assert.equal(repeat.moves.length, 0);

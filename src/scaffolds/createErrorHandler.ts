@@ -1,20 +1,21 @@
 import path from 'node:path';
-import { getPlatformPath } from '../utils/architecture.js';
+import { getBootstrapPath } from '../utils/architecture.js';
 import { writeIfNotExists, updateIndexTs } from '../utils/fileUtils.js';
 
 export default async function createErrorHandler(): Promise<void> {
-	const root = path.join(getPlatformPath(), 'Bootstrap/Handlers');
+	const root = path.join(getBootstrapPath(), 'Handlers');
 	await writeIfNotExists(
 		path.join(root, 'ErrorHandler.ts'),
-		`import type { AppAzureNetKitErrorContext } from '@azure-net/kit';
+		`import type { AppServerErrorContext } from '@azure-net/kit';
 
-export const ErrorHandler = ({ error }: AppAzureNetKitErrorContext) => {
-	return error.toPlainObject();
+export const ErrorHandler = ({ error }: AppServerErrorContext) => {
+	// Report server errors here. HTTP retry belongs to ApiDatasource.
+ void error;
 };
 `
 	);
 	await updateIndexTs(root);
 	console.log(
-		"In Bootstrap/Bootstrap.ts, import { ErrorHandler } from '#platform/Bootstrap/Handlers' and call app.useAzureNetKitError(ErrorHandler). Existing Bootstrap preserved."
+		"In bootstrap/index.ts, import { ErrorHandler } from '#bootstrap/Handlers' and call app.useServerError(ErrorHandler). Existing Bootstrap preserved."
 	);
 }
